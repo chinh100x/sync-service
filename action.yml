@@ -2,7 +2,7 @@ name: sync-service
 description: Propagate a commit between a production repo and its OSS counterpart, per architecture.md (v2, bidirectional)
 inputs:
   config:
-    description: Path to the mapping config (e.g. sync/monitoring.yaml). It always lives in the production repo, regardless of direction.
+    description: The mapping config itself — inline YAML content (not a path), embedded directly in the calling workflow.
     required: true
   direction:
     description: "forward = production -> OSS (this workflow lives in the production repo); reverse = OSS -> production (this workflow lives in the OSS repo)"
@@ -36,6 +36,15 @@ runs:
         path: .sync-service-counterpart
         fetch-depth: 0
 
+    - name: Write mapping config
+      shell: bash
+      env:
+        CONFIG_CONTENT: ${{ inputs.config }}
+      run: |
+        # Passed via env, not interpolated into the script, so the YAML content's own
+        # quotes/backslashes (redact patterns, etc.) can't break out of this step.
+        printf '%s\n' "$CONFIG_CONTENT" > "${{ github.workspace }}/.sync-service-config.yaml"
+
     - name: Install uv
       uses: astral-sh/setup-uv@v3
 
@@ -61,7 +70,7 @@ runs:
         fi
 
         sync-service run \
-          --config "$SOURCE_REPO/${{ inputs.config }}" \
+          --config "${{ github.workspace }}/.sync-service-config.yaml" \
           --source-repo "$SOURCE_REPO" \
           --dest-repo "$DEST_REPO" \
           --base "${{ inputs.base }}" \
