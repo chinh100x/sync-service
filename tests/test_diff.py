@@ -24,3 +24,17 @@ def test_match_multiple_files_same_mapping():
     files = ["src/portmon/a.py", "src/portmon/b.py"]
     hits = match(files, mappings)
     assert hits["portmon"] == files
+
+
+def test_match_whole_repo_mapping_matches_anything():
+    mappings = [_mapping("portmon", ".")]
+    files = [".github/workflows/sync.yaml", "README.md"]
+    hits = match(files, mappings)
+    assert hits["portmon"] == files
+
+
+def test_match_default_source_is_whole_repo():
+    m = Mapping(key="portmon", break_check=BreakCheck(install="true", run="true"))
+    assert m.source == "." and m.dest == "."
+    hits = match(["anything.py"], [m])
+    assert hits == {"portmon": ["anything.py"]}
