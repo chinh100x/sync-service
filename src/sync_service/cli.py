@@ -210,6 +210,19 @@ def main(argv: list[str] | None = None) -> int:
 
         files = diff.changed_files(near_repo, args.base, args.head)
         hits = diff.match(files, config.mappings, path_attr=path_attr)
+
+        # The config file itself lives in the production repo (either direction — see
+        # action.yml). If *it* changed, every mapping it defines needs re-checking, not
+        # just whichever ones also happen to have a source/dest path in this diff —
+        # e.g. someone only edited break_check or added a redact rule, with no code change.
+        try:
+            config_rel = str(Path(args.config).resolve().relative_to(near_repo.resolve()))
+        except ValueError:
+            config_rel = None
+        if config_rel and config_rel in files:
+            for m in config.mappings:
+                hits.setdefault(m.key, []).append(config_rel)
+
         if not hits:
             print("no mapping touched — no-op")
             return 0
