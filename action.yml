@@ -41,7 +41,7 @@ runs:
 
     - name: Install sync-service
       shell: bash
-      run: uv tool install "git+https://github.com/100x/sync-service"
+      run: uv tool install "git+https://github.com/chinh100x/sync-service"
 
     - name: Run sync
       shell: bash
