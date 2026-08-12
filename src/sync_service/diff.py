@@ -19,6 +19,18 @@ def changed_files(repo_path: str | Path, base: str, head: str) -> list[str]:
     return [line for line in out.stdout.splitlines() if line]
 
 
+def commit_message(repo_path: str | Path, sha: str) -> str:
+    """The original commit's own message — subject + body, exactly as the human wrote it."""
+    out = subprocess.run(
+        ["git", "log", "-1", "--pretty=%B", sha],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
 def match(files: list[str], mappings: list[Mapping], path_attr: str = "source") -> dict[str, list[str]]:
     """mapping.key -> touched files under mapping.<path_attr>, for mappings actually touched.
 

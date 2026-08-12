@@ -105,8 +105,11 @@ def run_direction(
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
         break_note = "No break check configured for this direction."
 
-    publish.commit_to_branch(far_repo, branch, message=f"{label}: {mapping.key} @ {head_sha[:12]}")
-    title = f"[{label}] {mapping.key}: propagate @ {head_sha[:12]}"
+    original_message = diff.commit_message(near_repo, head_sha)
+    original_subject = original_message.splitlines()[0] if original_message else f"@ {head_sha[:12]}"
+    commit_message = f"{original_message}\n\nSync-Source: {mapping.key} @ {head_sha[:12]} ({label})"
+    publish.commit_to_branch(far_repo, branch, message=commit_message)
+    title = f"[{label}] {mapping.key}: {original_subject}"
     body = (
         f"Automated {label} sync, mapping `{mapping.key}` (`{near_path}` -> `{far_path}`).\n\n"
         f"Files changed: {', '.join(sorted(classified))}\n\n"
@@ -159,7 +162,9 @@ def _propose_reverse(
         target_file.parent.mkdir(parents=True, exist_ok=True)
         target_file.write_text(text)
 
-    publish.commit_to_branch(target_repo, branch, message=f"reverse-sync: {mapping.key} <- {origin_head[:12]}")
+    original_message = diff.commit_message(origin_repo, origin_head)
+    commit_message = f"{original_message}\n\nSync-Source: {mapping.key} @ {origin_head[:12]} (reverse-proposal)"
+    publish.commit_to_branch(target_repo, branch, message=commit_message)
     title = f"[reverse-sync] {mapping.key}: bring in an outside edit ({', '.join(sorted(diverged_paths))})"
     body = (
         f"An edit landed on the other side of `{mapping.key}` since the last sync, "
