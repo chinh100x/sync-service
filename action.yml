@@ -33,10 +33,10 @@ runs:
         repository: ${{ inputs.counterpart-repo }}
         ref: ${{ inputs.counterpart-branch }}
         token: ${{ inputs.counterpart-token }}
-        # A sibling of $GITHUB_WORKSPACE, not nested inside it — critical now that source/dest
-        # can default to the whole repo. If this lived inside the workspace, a whole-repo
-        # mapping would walk right into it and try to propagate a nested copy of itself.
-        path: ../sync-service-counterpart
+        # actions/checkout refuses a path outside $GITHUB_WORKSPACE (security guard against
+        # path traversal), so this has to live inside it — sync_service.scrub hardcodes an
+        # exclude for this exact name so a whole-repo mapping never walks into it.
+        path: .sync-service-counterpart
         fetch-depth: 0
 
     - name: Write mapping config
@@ -61,7 +61,7 @@ runs:
         GH_TOKEN: ${{ inputs.counterpart-token }}
       run: |
         set -euo pipefail
-        COUNTERPART="$(cd "${{ github.workspace }}/../sync-service-counterpart" && pwd)"
+        COUNTERPART="${{ github.workspace }}/.sync-service-counterpart"
         HERE="${{ github.workspace }}"
 
         if [ "${{ inputs.direction }}" = "forward" ]; then

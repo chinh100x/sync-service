@@ -13,8 +13,10 @@ from .config import RedactRule
 # Always excluded, regardless of the mapping's own exclude list — mechanical necessities
 # of the tool itself, not a content decision. Relevant now that source/dest default to
 # the whole repo: without this, a full-repo mapping would try to copy the other repo's
-# .git internals, and each side's own sync bookkeeping into the other's tree.
-_ALWAYS_EXCLUDE = {".git", ".sync-state"}
+# .git internals, each side's own sync bookkeeping, and — since actions/checkout won't
+# place a checkout outside $GITHUB_WORKSPACE — the counterpart checkout action.yml makes,
+# into the other repo's tree.
+_ALWAYS_EXCLUDE = {".git", ".sync-state", ".sync-service-counterpart"}
 
 
 def apply(
