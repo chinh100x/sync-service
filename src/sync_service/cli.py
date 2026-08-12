@@ -59,20 +59,13 @@ def run_direction(
         return "secret-halt"
 
     manifest = state.load(far_repo, mapping.key)
-    classified = state.classify(far_repo, manifest, desired, mapping.key)
+    classified = state.classify(far_repo, manifest, desired)
 
     conflicts = [p for p, r in classified.items() if r.status == "conflict"]
     if conflicts:
-        lines = [f"  - {p}: far side and this change both touched it" for p in conflicts]
-        notify.comment_on_commit(
-            head_sha,
-            f"[{label}] {mapping.key}: sync halted, manual reconciliation needed "
-            f"(auto-merge attempted, could not resolve cleanly):\n" + "\n".join(lines),
-        )
-        return "conflict-halt"
-
-    diverged = [p for p, r in classified.items() if r.status == "merged"]
-    if diverged:
+        # The far side changed since our last sync — halt the primary sync (never
+        # overwrite it), but still propose that far-side edit back on its own PR so
+        # it isn't just discarded because this run happened to be going the other way.
         _propose_reverse(
             mapping=mapping,
             label=label,
@@ -82,8 +75,14 @@ def run_direction(
             target_path=near_path,
             transform_rules=reverse_rules,
             base_branch=base_branch,
-            diverged_paths=diverged,
+            diverged_paths=conflicts,
         )
+        lines = [f"  - {p}: far side and this change both touched it" for p in conflicts]
+        notify.comment_on_commit(
+            head_sha,
+            f"[{label}] {mapping.key}: sync halted, manual reconciliation needed:\n" + "\n".join(lines),
+        )
+        return "conflict-halt"
 
     for rel_path, result in classified.items():
         far_file = far_repo / rel_path
@@ -111,8 +110,7 @@ def run_direction(
     body = (
         f"Automated {label} sync, mapping `{mapping.key}` (`{near_path}` -> `{far_path}`).\n\n"
         f"Files changed: {', '.join(sorted(classified))}\n\n"
-        + (f"Auto-merged with a concurrent far-side edit on: {', '.join(sorted(diverged))}.\n\n" if diverged else "")
-        + f"{break_note} Nothing auto-merges — human review required."
+        f"{break_note} Nothing auto-merges — human review required."
     )
     result = publish.open_pr(far_repo, branch, base_branch, title, body)
     print(f"[{label}:{mapping.key}] {result}")

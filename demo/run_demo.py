@@ -1,17 +1,17 @@
-"""End-to-end demo of the v2 (bidirectional) sync service against two local git repos
+"""End-to-end demo of the bidirectional sync service against two local git repos
 standing in for "the production repo" and "the open source repo" — no GitHub needed.
 
 Walks through:
   STEP 1 — first sync, two mappings at once (forward)
   STEP 2 — secret scan halt (forward)
-  STEP 3 — outside OSS edit + a non-overlapping prod edit -> auto three-way merge,
-           PLUS a separate reverse-sync PR proposing the outsider's edit back to prod
-  STEP 4 — outside OSS edit + a prod edit that touch the *same* line -> real conflict,
-           still halts (auto-resolution only fires when it's unambiguous)
-  STEP 5 — break check failure (forward), working tree reverted
-  STEP 6 — no-op (touched file isn't under any mapping)
-  STEP 7 — idempotent re-run of step 1's range -> skipped
-  STEP 8 — an OSS commit, run explicitly with --direction reverse -> a real PR onto
+  STEP 3 — the far side diverged since the last sync -> conflict halt, no PR;
+           a *separate* reverse-sync PR still proposes the outsider's edit back,
+           hydrated. No merge is attempted — any divergence is a hard stop.
+  STEP 4 — break check failure (forward), working tree reverted
+  STEP 4b — bug fixed, forward sync succeeds on retry
+  STEP 5 — no-op (touched file isn't under any mapping)
+  STEP 6 — idempotent re-run of step 1's range -> skipped
+  STEP 7 — an OSS commit, run explicitly with --direction reverse -> a real PR onto
            the production repo, with `hydrate` restoring the real endpoint
 
 Run with:  uv run python demo/run_demo.py
@@ -166,7 +166,7 @@ def main() -> None:
     sha2 = commit(prod, "portmon: (accidentally) hardcode an API key")
     run(sha1, sha2, "STEP 2 — secret scan hit -> halted, no PR")
 
-    # ---- outside contributor edits plugin/covenant.py on oss main — a comment, non-overlapping ----
+    # ---- outside contributor edits plugin/covenant.py on oss main ----
     write(
         oss,
         "plugin/covenant.py",
@@ -181,9 +181,9 @@ def main() -> None:
     )
     commit(oss, "outside PR: add a comment to covenant.py")
     oss_head_before_step3 = rev(oss)
-    print("(demo) an outside contributor merged a comment-only change to plugin/covenant.py on oss main")
+    print("(demo) an outside contributor merged a change to plugin/covenant.py on oss main")
 
-    # ---- sha3: prod fixes the secret AND adds a new function — also non-overlapping ----
+    # ---- sha3: prod (separately) fixes the secret and adds a new function ----
     write(
         prod,
         "src/portmon/covenant.py",
@@ -199,75 +199,52 @@ def main() -> None:
         """,
     )
     sha3 = commit(prod, "portmon: remove the API key, add audit()")
-    run(sha2, sha3, "STEP 3 — non-overlapping edits on both sides -> auto three-way merge + reverse-sync proposal")
+    run(sha2, sha3, "STEP 3 — oss diverged since last sync -> conflict halt, no PR; reverse-sync proposal still fires")
 
-    print("\n-- what the auto-merge produced (still on the sync/portmon branch) --")
-    merged_text = git(oss, "show", f"sync/portmon/{sha3[:12]}:plugin/covenant.py").stdout
-    print("has outsider's comment:", "polled every 5 minutes" in merged_text)
-    print("has prod's audit():", "def audit():" in merged_text)
+    print("\n-- the primary sync halted: no forward branch/PR for this run --")
+    forward_branch_exists = git(oss, "rev-parse", "--verify", f"sync/portmon/{sha3[:12]}", check=False).returncode == 0
+    print("sync/portmon branch exists:", forward_branch_exists)
 
-    print("\n-- what the reverse-sync proposal put on the prod repo --")
+    print("\n-- what the reverse-sync proposal put on the prod repo, independent of that halt --")
     reverse_branch = f"reverse-sync/portmon/{oss_head_before_step3[:12]}"
     proposed_text = git(prod, "show", f"{reverse_branch}:src/portmon/covenant.py").stdout
     print(f"branch: {reverse_branch}")
-    print("proposed content has real endpoint (hydrated, not the placeholder):",
+    print("has the outsider's comment:", "polled every 5 minutes" in proposed_text)
+    print("hydrated (real endpoint, not the placeholder):",
           "cag-mcp.internal" in proposed_text and "<MCP_ENDPOINT>" not in proposed_text)
+    print("(demo) both branches are left for a human to look at — portmon needs manual "
+          "reconciliation now; nothing here gets auto-resolved)")
 
-    # human approves both: the merged forward PR, and the reverse-sync proposal
-    git(oss, "checkout", "main")
-    git(oss, "merge", "--no-ff", f"sync/portmon/{sha3[:12]}", "-m", "merge sync PR: portmon (auto-merged)")
-    git(prod, "checkout", "main")
-    git(prod, "merge", "--no-ff", reverse_branch, "-m", "merge reverse-sync PR: portmon")
-    print("(demo) human approved both the auto-merged forward PR and the reverse-sync proposal")
-
-    # ---- sha4: outsider AND prod both edit the exact same line -> real conflict ----
-    write(
-        oss,
-        "plugin/covenant.py",
-        git(oss, "show", "HEAD:plugin/covenant.py").stdout.replace("return True", "return False  # outsider disagrees"),
-    )
-    commit(oss, "outside PR: check() should report False during maintenance")
-    print("(demo) an outside contributor merged a change to the same line prod is about to touch")
-
+    # ---- sha4: brk gets a real bug -> breakcheck-halt (independent mapping, unaffected by portmon's conflict) ----
     sha4_base = rev(prod)
-    write(
-        prod,
-        "src/portmon/covenant.py",
-        git(prod, "show", "HEAD:src/portmon/covenant.py").stdout.replace("return True", "return 'ok'  # prod refactor"),
-    )
-    sha4 = commit(prod, "portmon: refactor check()'s return value")
-    run(sha4_base, sha4, "STEP 4 — same line edited on both sides -> real conflict, halted (no auto-resolution)")
-
-    # ---- sha5: brk gets a real bug -> breakcheck-halt ----
-    sha5_base = rev(prod)
     write(prod, "src/brk/mod.py", "def run():\n    raise RuntimeError('boom')\n\nif __name__ == '__main__':\n    run()\n")
-    sha5 = commit(prod, "brk: introduce a bug")
-    run(sha5_base, sha5, "STEP 5 — break check fails -> halted, no PR, working tree reverted")
+    sha4 = commit(prod, "brk: introduce a bug")
+    run(sha4_base, sha4, "STEP 4 — break check fails -> halted, no PR, working tree reverted")
     print("brk/mod.py on oss main still has the old, working version:",
           "boom" not in (oss / "brk" / "mod.py").read_text())
 
-    # ---- sha5b: human fixes the bug and retries — design.md §3's retry path ----
+    # ---- sha4b: human fixes the bug and retries — design.md §3's retry path ----
     fixed_brk = "def run():\n    print('brk ok')\n\nif __name__ == '__main__':\n    run()\n"
     write(prod, "src/brk/mod.py", fixed_brk)
-    sha5b = commit(prod, "brk: fix the bug")
-    run(sha5, sha5b, "STEP 5b — bug fixed, forward sync succeeds on retry")
+    sha4b = commit(prod, "brk: fix the bug")
+    run(sha4, sha4b, "STEP 4b — bug fixed, forward sync succeeds on retry")
 
     # bootstrap the reverse-direction manifest for brk: a one-time step (see DEPLOY.md)
     # so the *next* OSS -> production check has a baseline to compare against, instead
     # of treating production's existing file as unknown-provenance on its very first check.
-    state.write(prod, "brk", sha5b, {"src/brk/mod.py": fixed_brk})
+    state.write(prod, "brk", sha4b, {"src/brk/mod.py": fixed_brk})
     print("(demo) bootstrap: seeded brk's reverse-direction manifest on the prod repo")
 
-    # ---- sha6: touches only README, no mapping matches -> no-op ----
-    sha6_base = rev(prod)
+    # ---- sha5: touches only README, no mapping matches -> no-op ----
+    sha5_base = rev(prod)
     write(prod, "README.md", "# production repo (demo)\nupdated\n")
-    sha6 = commit(prod, "docs: update README")
-    run(sha6_base, sha6, "STEP 6 — no changed file matches any mapping -> no-op")
+    sha5 = commit(prod, "docs: update README")
+    run(sha5_base, sha5, "STEP 5 — no changed file matches any mapping -> no-op")
 
     # ---- re-run sha0..sha1: PR already exists for (mapping, head_sha) -> skip ----
-    run(sha0, sha1, "STEP 7 — idempotent re-run of step 1's range -> skipped, PR already exists")
+    run(sha0, sha1, "STEP 6 — idempotent re-run of step 1's range -> skipped, PR already exists")
 
-    # ---- STEP 8: an OSS-side commit, driven explicitly with --direction reverse ----
+    # ---- STEP 7: an OSS-side commit, driven explicitly with --direction reverse ----
     oss_base = rev(oss)
     write(
         oss,
@@ -276,7 +253,7 @@ def main() -> None:
     )
     commit(oss, "outside PR: note the status endpoint in brk/mod.py")
     oss_head = rev(oss)
-    run(oss_base, oss_head, "STEP 8 — OSS push triggers --direction reverse directly -> PR onto the production repo", direction="reverse")
+    run(oss_base, oss_head, "STEP 7 — OSS push triggers --direction reverse directly -> PR onto the production repo", direction="reverse")
 
     print("\n-- what the explicit reverse run proposed on the prod repo --")
     reverse_brk_branch = f"reverse-sync/brk/{oss_head[:12]}"
