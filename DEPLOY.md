@@ -72,13 +72,28 @@ With a real remote configured, `publish.open_pr` (in
 instead of the dry-run print — confirm a real PR shows up on the throwaway
 OSS repo before moving on.
 
-## 3. Add the mapping config to the production repo
+## 3. Where the mapping config lives
 
-Drop `sync/<name>.yaml` into the production repo, next to the code it maps
-(see `design.md` and architecture.md §3 for the schema). Concretely, for
-OST-4 that's `sync/monitoring.yaml` in the monitoring production repo; for
-OST-5 it's `sync/tools.yaml` (or one file, three `mappings` entries) in each
-of the three 100xtools production sources.
+The CLI itself still takes `--config <path-to-a-file>` — that's what §2's
+manual run, `demo/run_demo.py`, and the test suite all use, and a standalone
+`sync/<name>.yaml` file (see `design.md`/architecture.md §3 for the schema)
+next to the code it maps is a perfectly good way to keep one for local use or
+version-control history.
+
+**The composite Action (`action.yml`) is different: its `config` input is the
+mapping YAML's actual *content*, embedded inline in the calling workflow —
+not a path.** The action writes it to a temp file itself before invoking the
+CLI. This means the workflow file is fully self-contained (nothing else to
+go look up), at the cost of the same text needing to be duplicated into
+*both* `sync.yaml` (production repo) and `reverse-sync.yaml` (OSS repo) if
+you're running both directions — see §4/§5's examples. If you'd rather keep
+one shared file instead of duplicating the block, revert `action.yml`'s
+`config` input to take a path again and have both workflows point at the
+same `sync/<name>.yaml`; the CLI doesn't care which way it arrives.
+
+Concretely, for OST-4 that's the monitoring mapping; for OST-5 it's
+`tools` (three `mappings` entries, one per production source) in each of the
+three 100xtools production sources.
 
 **Important operational gotcha**: `state.classify` (architecture.md §5/v2)
 treats *any* file that already exists at a mapped path but isn't in the
@@ -117,7 +132,9 @@ name: sync-service
 on:
   push:
     branches: [main]
-    paths: ["src/portmon/**"]   # match sync/monitoring.yaml's mapping source(s)
+    # match the mapping's source(s) below, plus this file itself so editing
+    # the embedded config also triggers a run
+    paths: ["src/portmon/**", ".github/workflows/sync.yaml"]
 
 jobs:
   sync:
@@ -129,7 +146,17 @@ jobs:
 
       - uses: 100x/sync-service@v1
         with:
-          config: sync/monitoring.yaml
+          config: |
+            destination:
+              repo: 100x-oss/portfolio-monitoring
+              branch: main
+            mappings:
+              - key: portmon
+                source: src/portmon
+                dest: plugin
+                break_check:
+                  install: "pip install -e ."
+                  run: "portmon run --deal demo/ost6-deal-01"
           direction: forward
           counterpart-repo: 100x-oss/portfolio-monitoring   # the OSS repo
           counterpart-branch: main
@@ -153,8 +180,11 @@ Two things worth knowing about `base`/`head` for a push-triggered workflow:
 
 ## 5. Add the reverse workflow to the OSS repo (only if you want OSS -> production live)
 
-Same action, same config file (it still lives in the production repo — the
-action checks out the counterpart to reach it either way), opposite roles:
+Same action, opposite roles — and the **same mapping config text**, pasted
+into this workflow too. It's the one piece of real duplication this approach
+costs: the block below must stay identical to §4's, by hand, since each
+workflow is independently self-contained. (See §3 if that tradeoff isn't
+worth it — a shared file works too.)
 
 ```yaml
 # .github/workflows/reverse-sync.yaml, in the OSS repo
@@ -162,7 +192,7 @@ name: sync-service-reverse
 on:
   push:
     branches: [main]
-    paths: ["plugin/**"]   # match sync/monitoring.yaml's mapping dest(s)
+    paths: ["plugin/**"]   # match the mapping's dest(s)
 
 jobs:
   reverse-sync:
@@ -174,7 +204,17 @@ jobs:
 
       - uses: 100x/sync-service@v1
         with:
-          config: sync/monitoring.yaml
+          config: |
+            destination:
+              repo: 100x-oss/portfolio-monitoring
+              branch: main
+            mappings:
+              - key: portmon
+                source: src/portmon
+                dest: plugin
+                break_check:
+                  install: "pip install -e ."
+                  run: "portmon run --deal demo/ost6-deal-01"
           direction: reverse
           counterpart-repo: 100x/portfolio-monitoring       # the production repo
           counterpart-branch: main
