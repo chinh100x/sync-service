@@ -1,6 +1,6 @@
 # sync-service
 
-Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. Non-overlapping edits on both sides auto-resolve via a three-way merge; a real same-line conflict still halts for a human. See design.md's "v2" section — this goes beyond OST-3's original v1 (downstream-only) scope.
+Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. Any divergence on the far side since the last sync is a hard stop for a human — full-repo tracking and reverse-sync are beyond OST-3's original v1 (downstream-only) scope; see design.md's "v2"–"v4" sections for what that means and why an earlier auto-merge attempt was reverted.
 
 This directory is a standalone project. It doesn't inherit CI/build conventions from any other repo.
 
@@ -13,7 +13,7 @@ src/sync_service/
 ├── diff.py         which mappings did base..head touch (the trigger) — source-side or dest-side depending on direction
 ├── scrub.py        exclude list + regex substitution, direction-agnostic (redact fwd, hydrate rev)
 ├── secretscan.py   demo secret-scan gate — swap for `gitleaks` in production, see DEPLOY.md
-├── state.py        sync-state manifest as a blob store + three-way merge (`classify`) instead of a hard stop
+├── state.py        sync-state manifest — hash comparison, hard stop on any divergence
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
 ├── publish.py      branch + commit + `gh pr create`
 └── notify.py       comment on the source commit when a run halts
@@ -36,7 +36,7 @@ Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, n
 ```bash
 uv run pytest -v
 ```
-10 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching), `test_scrub.py` (exclude + redact + hydrate), `test_state.py` (clean / new / auto-merged / real-conflict classification).
+13 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs), `test_state.py` (clean / new / conflict classification).
 
 ### 3. Run the end-to-end demo (the whole system, both directions)
 
@@ -46,17 +46,16 @@ uv run python demo/run_demo.py
 
 It builds two throwaway local git repos in `/tmp` (`prod-repo`, `oss-repo`) and drives commits through the real CLI in both directions. Read the output top to bottom — each `STEP` header is one commit landing on some repo's `main` and the service reacting to it:
 
-| Step | What happens                                                                       | Which decision it proves                                                                                                                                                                     |
+| Step | What happens                                                                       | Which decision it proves                                                                                                                                     |
 | ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | Commit touches both `src/portmon/` and `src/brk/` → two PRs opened (dry-run print) | trigger fires per-mapping; `internal_reporting.py` excluded; `cag-mcp.internal` URL redacted to `<MCP_ENDPOINT>`                                                                             |
 | 2    | A hardcoded API key sneaks into `covenant.py`                                      | secret-scan gate halts the run, no PR, comment printed                                                                                                                                       |
-| 3    | An outside OSS comment-only edit, plus a non-overlapping prod change (`audit()`)   | three-way merge auto-resolves cleanly — PR carries **both** edits, and a *separate* reverse-sync PR proposes the outsider's edit back to prod, hydrated (real endpoint, not the placeholder) |
-| 4    | An outside OSS edit and a prod edit touch the *same* line                          | real conflict — auto-resolution doesn't fire, halted for manual reconciliation, same as v1                                                                                                   |
-| 5    | `src/brk/mod.py` gets a real bug                                                   | break check runs it, fails, **working tree is reverted** — `brk/mod.py` on OSS main still has the old working code                                                                           |
-| 5b   | The bug gets fixed and pushed again                                                | forward sync succeeds on retry — design.md §3's retry path                                                                                                                                   |
-| 6    | Commit only touches `README.md`                                                    | no mapping matched → no-op                                                                                                                                                                   |
-| 7    | Re-run the exact same base/head as step 1                                          | branch already exists → skipped (idempotent)                                                                                                                                                 |
-| 8    | An OSS commit, run with `--direction reverse` directly                             | the *explicit* OSS → production trigger — a real PR onto the production repo, hydrated                                                                                                       |
+| 3    | An outside OSS edit, then a separate prod change to the same mapping               | far side diverged → conflict halt, no forward PR — **but** a *separate* reverse-sync PR still proposes the outsider's edit back to prod, hydrated. No merge is attempted either way. |
+| 4    | `src/brk/mod.py` gets a real bug                                                   | break check runs it, fails, **working tree is reverted** — `brk/mod.py` on OSS main still has the old working code                                                                           |
+| 4b   | The bug gets fixed and pushed again                                                | forward sync succeeds on retry — design.md §3's retry path                                                                                                                                   |
+| 5    | Commit only touches `README.md`                                                    | no mapping matched → no-op                                                                                                                                                                   |
+| 6    | Re-run the exact same base/head as step 1                                          | branch already exists → skipped (idempotent)                                                                                                                                                 |
+| 7    | An OSS commit, run with `--direction reverse` directly                             | the *explicit* OSS → production trigger — a real PR onto the production repo, hydrated                                                                                                       |
 
 At the very end it prints a workspace path, e.g.:
 ```
@@ -79,11 +78,10 @@ git -C "$WS/oss-repo" log --oneline main
 git -C "$WS/oss-repo" branch -a
 git -C "$WS/prod-repo" branch -a
 
-# the manifest + blob store that makes the three-way merge possible
+# the manifest that makes conflict-detection possible — hash-only, no blobs
 cat "$WS/oss-repo/.sync-state/portmon.json"
-ls "$WS/oss-repo/.sync-state/portmon/blobs/"
 
-# the propagated, scrubbed file — and its auto-merged version after step 3
+# the propagated, scrubbed file
 cat "$WS/oss-repo/plugin/covenant.py"
 
 # proof the exclude worked — internal_reporting.py never made it across

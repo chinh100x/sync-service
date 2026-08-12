@@ -7,12 +7,13 @@ real PR back onto production." Follow architecture.md §9's build order: get
 the shared tool working end to end against a throwaway repo pair first, *then*
 wire OST-4, *then* OST-5. Don't skip straight to production repos.
 
-**This is v2 (bidirectional + auto-merge), beyond OST-3/4/5's current written
-scope** — see design.md's "v2" section for what that means and why it's called
-out separately. Everything below assumes you want both directions live; if you
-only want the original v1 (downstream-only) behavior, just skip §5 (the reverse
-workflow) and never enable `hydrate` in the mapping config — forward-only still
-works exactly as before.
+**This is bidirectional (v2), beyond OST-3/4/5's current written scope** — see
+design.md's "v2" section for what that means and why it's called out separately.
+(An earlier auto-merge feature that also lived under "v2" was tried and reverted
+in v4 — any divergence is a hard stop again, same as v1.) Everything below assumes
+you want both directions live; if you only want the original v1 (downstream-only)
+behavior, just skip §5 (the reverse workflow) and never enable `hydrate` in the
+mapping config — forward-only still works exactly as before.
 
 ## 0. Prerequisites
 
@@ -124,7 +125,7 @@ file in it. Two ways to bootstrap cleanly, per direction:
       "plugin/covenant.py": Path("/path/to/checkout/plugin/covenant.py").read_text(),
   })
   ```
-  `state.write` handles both the hash and the blob the three-way merge needs.
+  `state.write` handles the hash for you.
 
 **This applies separately to each direction.** Enabling reverse for a mapping
 that's only ever run forward means the *production* side has no manifest yet
@@ -254,10 +255,10 @@ tenant data in it.
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR
-   (secret scan hit), a non-overlapping edit on both sides (auto-merge +
-   reverse-sync proposal), a real same-line conflict (still halts), a break
-   check failure with a working-tree revert, and — if you're enabling §5 — an
-   explicit `--direction reverse` run.
+   (secret scan hit), a far-side divergence (conflict halt, no forward PR —
+   but the reverse-sync proposal still fires), a break check failure with a
+   working-tree revert, and — if you're enabling §5 — an explicit
+   `--direction reverse` run.
 2. **OST-4**: wire `sync/monitoring.yaml` into the monitoring production
    repo, make one real commit, confirm the PR against the OST-6 demo deal
    looks right and the break check actually ran `portmon run --deal
