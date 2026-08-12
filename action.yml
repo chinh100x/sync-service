@@ -33,7 +33,10 @@ runs:
         repository: ${{ inputs.counterpart-repo }}
         ref: ${{ inputs.counterpart-branch }}
         token: ${{ inputs.counterpart-token }}
-        path: .sync-service-counterpart
+        # A sibling of $GITHUB_WORKSPACE, not nested inside it — critical now that source/dest
+        # can default to the whole repo. If this lived inside the workspace, a whole-repo
+        # mapping would walk right into it and try to propagate a nested copy of itself.
+        path: ../sync-service-counterpart
         fetch-depth: 0
 
     - name: Write mapping config
@@ -41,9 +44,9 @@ runs:
       env:
         CONFIG_CONTENT: ${{ inputs.config }}
       run: |
-        # Passed via env, not interpolated into the script, so the YAML content's own
-        # quotes/backslashes (redact patterns, etc.) can't break out of this step.
-        printf '%s\n' "$CONFIG_CONTENT" > "${{ github.workspace }}/.sync-service-config.yaml"
+        # Written to the runner's temp dir, not the workspace — same reason as the
+        # checkout path above: it must not be inside the tree a whole-repo mapping walks.
+        printf '%s\n' "$CONFIG_CONTENT" > "${{ runner.temp }}/sync-service-config.yaml"
 
     - name: Install uv
       uses: astral-sh/setup-uv@v3
@@ -58,7 +61,7 @@ runs:
         GH_TOKEN: ${{ inputs.counterpart-token }}
       run: |
         set -euo pipefail
-        COUNTERPART="${{ github.workspace }}/.sync-service-counterpart"
+        COUNTERPART="$(cd "${{ github.workspace }}/../sync-service-counterpart" && pwd)"
         HERE="${{ github.workspace }}"
 
         if [ "${{ inputs.direction }}" = "forward" ]; then
@@ -70,7 +73,7 @@ runs:
         fi
 
         sync-service run \
-          --config "${{ github.workspace }}/.sync-service-config.yaml" \
+          --config "${{ runner.temp }}/sync-service-config.yaml" \
           --source-repo "$SOURCE_REPO" \
           --dest-repo "$DEST_REPO" \
           --base "${{ inputs.base }}" \
