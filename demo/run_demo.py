@@ -78,9 +78,6 @@ def main() -> None:
         prod,
         "sync/monitoring.yaml",
         f"""\
-        destination:
-          repo: local-demo/oss-repo
-          branch: main
         mappings:
           - key: portmon
             source: src/portmon

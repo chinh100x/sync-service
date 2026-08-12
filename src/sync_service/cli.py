@@ -107,8 +107,7 @@ def run_direction(
 
     original_message = diff.commit_message(near_repo, head_sha)
     original_subject = original_message.splitlines()[0] if original_message else f"@ {head_sha[:12]}"
-    commit_message = f"{original_message}\n\nSync-Source: {mapping.key} @ {head_sha[:12]} ({label})"
-    publish.commit_to_branch(far_repo, branch, message=commit_message)
+    publish.commit_to_branch(far_repo, branch, message=original_message)
     title = f"[{label}] {mapping.key}: {original_subject}"
     body = (
         f"Automated {label} sync, mapping `{mapping.key}` (`{near_path}` -> `{far_path}`).\n\n"
@@ -144,7 +143,7 @@ def _propose_reverse(
     if publish.branch_exists(target_repo, branch):
         return
 
-    desired = scrub.apply(origin_repo, origin_path, target_path, [], transform_rules)
+    desired = scrub.apply(origin_repo, origin_path, target_path, mapping.exclude, transform_rules)
     if not desired:
         return
 
@@ -163,8 +162,7 @@ def _propose_reverse(
         target_file.write_text(text)
 
     original_message = diff.commit_message(origin_repo, origin_head)
-    commit_message = f"{original_message}\n\nSync-Source: {mapping.key} @ {origin_head[:12]} (reverse-proposal)"
-    publish.commit_to_branch(target_repo, branch, message=commit_message)
+    publish.commit_to_branch(target_repo, branch, message=original_message)
     title = f"[reverse-sync] {mapping.key}: bring in an outside edit ({', '.join(sorted(diverged_paths))})"
     body = (
         f"An edit landed on the other side of `{mapping.key}` since the last sync, "
@@ -211,18 +209,6 @@ def main(argv: list[str] | None = None) -> int:
         files = diff.changed_files(near_repo, args.base, args.head)
         hits = diff.match(files, config.mappings, path_attr=path_attr)
 
-        # The config file itself lives in the production repo (either direction — see
-        # action.yml). If *it* changed, every mapping it defines needs re-checking, not
-        # just whichever ones also happen to have a source/dest path in this diff —
-        # e.g. someone only edited break_check or added a redact rule, with no code change.
-        try:
-            config_rel = str(Path(args.config).resolve().relative_to(near_repo.resolve()))
-        except ValueError:
-            config_rel = None
-        if config_rel and config_rel in files:
-            for m in config.mappings:
-                hits.setdefault(m.key, []).append(config_rel)
-
         if not hits:
             print("no mapping touched — no-op")
             return 0
@@ -240,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 run_direction(
                     mapping=m,
-                    near_repo=dest_repo, near_path=m.dest, near_exclude=[], near_rules=m.hydrate,
+                    near_repo=dest_repo, near_path=m.dest, near_exclude=m.exclude, near_rules=m.hydrate,
                     far_repo=source_repo, far_path=m.source, far_break_check=m.reverse_break_check,
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="reverse-sync", label="reverse-sync", reverse_rules=m.redact,

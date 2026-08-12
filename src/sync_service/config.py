@@ -13,11 +13,6 @@ import yaml
 from pydantic import BaseModel, field_validator, model_validator
 
 
-class Destination(BaseModel):
-    repo: str
-    branch: str = "main"
-
-
 class RedactRule(BaseModel):
     pattern: str
     replace: str
@@ -40,8 +35,8 @@ class BreakCheck(BaseModel):
 
 class Mapping(BaseModel):
     key: str
-    source: str
-    dest: str
+    source: str = "."  # whole repo by default; narrow to a subdirectory if needed
+    dest: str = "."
     exclude: list[str] = []
     redact: list[RedactRule] = []
     # Reverse of `redact` — applied when a change flows dest -> source (OSS -> production),
@@ -63,7 +58,6 @@ class Mapping(BaseModel):
 
 
 class SyncConfig(BaseModel):
-    destination: Destination
     mappings: list[Mapping]
 
     @model_validator(mode="after")

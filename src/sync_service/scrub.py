@@ -10,6 +10,12 @@ from pathlib import Path
 
 from .config import RedactRule
 
+# Always excluded, regardless of the mapping's own exclude list — mechanical necessities
+# of the tool itself, not a content decision. Relevant now that source/dest default to
+# the whole repo: without this, a full-repo mapping would try to copy the other repo's
+# .git internals, and each side's own sync bookkeeping into the other's tree.
+_ALWAYS_EXCLUDE = {".git", ".sync-state"}
+
 
 def apply(
     repo_root: Path,
@@ -33,6 +39,8 @@ def apply(
         if path.is_dir():
             continue
         rel_to_source = path.relative_to(repo_root)
+        if rel_to_source.parts[0] in _ALWAYS_EXCLUDE:
+            continue
         if str(rel_to_source) in excluded or any(
             str(rel_to_source).startswith(e.rstrip("/") + "/") for e in excluded
         ):
