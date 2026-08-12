@@ -1,0 +1,70 @@
+name: sync-service
+description: Propagate a commit between a production repo and its OSS counterpart, per architecture.md (v2, bidirectional)
+inputs:
+  config:
+    description: Path to the mapping config (e.g. sync/monitoring.yaml). It always lives in the production repo, regardless of direction.
+    required: true
+  direction:
+    description: "forward = production -> OSS (this workflow lives in the production repo); reverse = OSS -> production (this workflow lives in the OSS repo)"
+    required: false
+    default: forward
+  counterpart-repo:
+    description: "owner/repo of the *other* repository (OSS repo for a forward run; production repo for a reverse run)"
+    required: true
+  counterpart-branch:
+    description: Counterpart repo's default branch
+    required: false
+    default: main
+  counterpart-token:
+    description: Token with contents:write + pull_requests:write on counterpart-repo (GitHub App installation token or scoped PAT). For reverse, this must be scoped to the *production* repo, not the OSS repo.
+    required: true
+  base:
+    description: Base SHA of the diff to consider (e.g. github.event.before)
+    required: true
+  head:
+    description: Head SHA of the diff to consider (e.g. github.sha)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Checkout counterpart repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.counterpart-repo }}
+        ref: ${{ inputs.counterpart-branch }}
+        token: ${{ inputs.counterpart-token }}
+        path: .sync-service-counterpart
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+
+    - name: Install sync-service
+      shell: bash
+      run: uv tool install "git+https://github.com/100x/sync-service"
+
+    - name: Run sync
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.counterpart-token }}
+      run: |
+        set -euo pipefail
+        COUNTERPART="${{ github.workspace }}/.sync-service-counterpart"
+        HERE="${{ github.workspace }}"
+
+        if [ "${{ inputs.direction }}" = "forward" ]; then
+          SOURCE_REPO="$HERE"          # this workflow runs in the production repo
+          DEST_REPO="$COUNTERPART"     # counterpart is the OSS repo
+        else
+          SOURCE_REPO="$COUNTERPART"   # counterpart is the production repo
+          DEST_REPO="$HERE"            # this workflow runs in the OSS repo
+        fi
+
+        sync-service run \
+          --config "$SOURCE_REPO/${{ inputs.config }}" \
+          --source-repo "$SOURCE_REPO" \
+          --dest-repo "$DEST_REPO" \
+          --base "${{ inputs.base }}" \
+          --head "${{ inputs.head }}" \
+          --base-branch "${{ inputs.counterpart-branch }}" \
+          --direction "${{ inputs.direction }}"

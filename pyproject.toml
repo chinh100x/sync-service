@@ -1,0 +1,24 @@
+[project]
+name = "sync-service"
+version = "0.1.0"
+description = "Prod -> open source sync service (OST-3/4/5 demo implementation)"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+sync-service = "sync_service.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sync_service"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
