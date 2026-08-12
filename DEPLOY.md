@@ -95,6 +95,16 @@ Concretely, for OST-4 that's the monitoring mapping; for OST-5 it's
 `tools` (three `mappings` entries, one per production source) in each of the
 three 100xtools production sources.
 
+**`source`/`dest` are optional — omit both to track the whole repo** instead
+of a subdirectory (see design.md's v3 section). `.git`, `.sync-state`, and the
+counterpart checkout `action.yml` makes are always excluded regardless, but
+anything else that shouldn't cross — a real `.env`, an internal-only folder —
+needs its own entry in `exclude`. There's no wildcard support there: list
+exact paths, not `*.env` or similar. If you're tracking the whole repo, also
+use `paths-ignore: [".sync-state/**"]` on the trigger (§4/§5) instead of an
+allowlist — a sync landing on the far side's own manifest shouldn't retrigger
+a workflow on that side.
+
 **Important operational gotcha**: `state.classify` (architecture.md §5/v2)
 treats *any* file that already exists at a mapped path but isn't in the
 sync-state manifest as a conflict — "unknown provenance," not "safe to
