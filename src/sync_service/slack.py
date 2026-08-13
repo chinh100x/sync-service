@@ -36,7 +36,12 @@ def post(text: str) -> bool:
             webhook_url, data=body, headers={"Content-Type": "application/json"}
         )
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-            return 200 <= response.status < 300
+            delivered = 200 <= response.status < 300
+            # Only prints when a webhook is actually configured -- the "not
+            # configured at all" early return above stays silent, so a run with no
+            # Slack setup doesn't gain log noise it didn't have before this feature.
+            print(f"[slack] {'posted' if delivered else f'failed (status {response.status})'}")
+            return delivered
     except Exception as exc:
         print(f"[slack] notification failed ({type(exc).__name__}), continuing anyway")
         return False
