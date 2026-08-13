@@ -1,6 +1,6 @@
 import subprocess
 
-from sync_service import cli, pr_writer
+from sync_service import cli, llm_client, pr_writer
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 SENSITIVE_COMMIT_TEXT = "Rocky Mountain CAG SharePoint sync"
@@ -65,7 +65,7 @@ def _fake_openai(monkeypatch, behavior, calls=None):
     def factory(**_kwargs):
         return _FakeClient(behavior, calls)
 
-    monkeypatch.setattr(pr_writer, "OpenAI", factory)
+    monkeypatch.setattr(llm_client, "OpenAI", factory)
     return calls
 
 
@@ -74,7 +74,7 @@ def _raising_openai(monkeypatch):
     def factory(**_kwargs):
         raise AssertionError("OpenAI() must not be constructed for this scenario")
 
-    monkeypatch.setattr(pr_writer, "OpenAI", factory)
+    monkeypatch.setattr(llm_client, "OpenAI", factory)
 
 
 # --- DeterministicPRWriter ---------------------------------------------------------

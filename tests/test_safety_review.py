@@ -1,6 +1,6 @@
 import subprocess
 
-from sync_service import cli, safety_review
+from sync_service import cli, llm_client, safety_review
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -55,7 +55,7 @@ def _fake_openai(monkeypatch, behavior, calls=None):
     def factory(**_kwargs):
         return _FakeClient(behavior, calls)
 
-    monkeypatch.setattr(safety_review, "OpenAI", factory)
+    monkeypatch.setattr(llm_client, "OpenAI", factory)
     return calls
 
 
@@ -63,7 +63,7 @@ def _raising_openai(monkeypatch):
     def factory(**_kwargs):
         raise AssertionError("OpenAI() must not be constructed for this scenario")
 
-    monkeypatch.setattr(safety_review, "OpenAI", factory)
+    monkeypatch.setattr(llm_client, "OpenAI", factory)
 
 
 # --- review(): disabled / misconfigured never touch the network -------------------

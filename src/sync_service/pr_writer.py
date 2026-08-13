@@ -23,11 +23,11 @@ from __future__ import annotations
 import os
 from typing import Protocol
 
-from openai import OpenAI
 from pydantic import BaseModel
 
-_DEFAULT_MODEL = "gpt-5.6"
-_TIMEOUT_SECONDS = 20.0
+from . import llm_client
+
+_DEFAULT_MODEL = llm_client.DEFAULT_MODEL
 _MAX_DIFF_CHARS = 12_000
 
 _SYSTEM_PROMPT = """You write pull-request summaries for a public repository that a \
@@ -84,11 +84,6 @@ class PRWriter(Protocol):
     def generate(self, context: PRContext) -> GeneratedPRContent: ...
 
 
-class PRGenerationFailed(Exception):
-    """Raised internally when a model call returns no usable structured output
-    (e.g. a refusal). Caught the same way as any other OpenAIPRWriter failure."""
-
-
 class DeterministicPRWriter:
     """No network call, cannot fail. Every field is derived directly from context --
     nothing invented, nothing that could hallucinate a fact."""
@@ -134,20 +129,18 @@ class OpenAIPRWriter:
         self._model = model
 
     def generate(self, context: PRContext) -> GeneratedPRContent:
-        client = OpenAI(api_key=self._api_key, timeout=_TIMEOUT_SECONDS)
-        response = client.responses.parse(
+        # Any failure here -- including llm_client.LLMCallFailed -- propagates up to
+        # build_pr_content()'s generic `except Exception`, which is where "fall back
+        # to the deterministic writer" actually happens. Nothing is caught here on
+        # purpose: this module has no fail-open/fail-closed decision to make, only
+        # build_pr_content() does.
+        return llm_client.structured_call(
+            api_key=self._api_key,
             model=self._model,
-            input=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": _user_content(context)},
-            ],
+            system_prompt=_SYSTEM_PROMPT,
+            user_content=_user_content(context),
             text_format=GeneratedPRContent,
-            store=False,  # minimize server-side retention of the sanitized diff/context
         )
-        parsed = response.output_parsed
-        if parsed is None:
-            raise PRGenerationFailed("model returned no usable structured output (refusal or empty response)")
-        return parsed
 
 
 def get_pr_writer(enabled: bool) -> PRWriter:

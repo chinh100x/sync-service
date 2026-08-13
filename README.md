@@ -14,6 +14,8 @@ src/sync_service/
 ├── scrub.py        exclude list + regex substitution, direction-agnostic (redact fwd, hydrate rev)
 ├── secretscan.py   demo secret-scan gate — swap for `gitleaks` in production, see DEPLOY.md
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
+├── llm_client.py   shared OpenAI structured-output call used by pr_writer.py/safety_review.py --
+│                   only the plumbing is shared; each caller keeps its own fail-open/fail-closed decision.
 ├── pr_writer.py    optional LLM-written human-readable PR title/body -- see design-history.md's v10 note.
 │                   Off by default (`llm_pr.enabled`); deterministic fallback always available.
 ├── safety_review.py  optional LLM semantic safety review -- see design-history.md's v12 note.

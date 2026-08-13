@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import os
 
-from openai import OpenAI
 from pydantic import BaseModel
 
-_DEFAULT_MODEL = "gpt-5.6"
-_TIMEOUT_SECONDS = 20.0
+from . import llm_client
+
+_DEFAULT_MODEL = llm_client.DEFAULT_MODEL
 # Fail closed, not truncate-and-hope: if the candidate content is too large to send
 # in full, we cannot honestly claim to have reviewed all of it, so this is treated
 # the same as any other reason the review couldn't run.
@@ -106,23 +106,18 @@ def review(context: SafetyReviewContext, *, enabled: bool) -> SafetyVerdict | No
         )
 
     model = os.environ.get("OPENAI_SAFETY_MODEL") or _DEFAULT_MODEL
-    client = OpenAI(api_key=api_key, timeout=_TIMEOUT_SECONDS)
+    # Unlike pr_writer.py, this module *is* the fail-closed boundary -- every
+    # failure, of either kind below, becomes the same SafetyReviewUnavailable, which
+    # cli.py treats as a hard halt, never a pass.
     try:
-        response = client.responses.parse(
+        return llm_client.structured_call(
+            api_key=api_key,
             model=model,
-            input=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": _user_content(context)},
-            ],
+            system_prompt=_SYSTEM_PROMPT,
+            user_content=_user_content(context),
             text_format=SafetyVerdict,
-            store=False,
         )
+    except llm_client.LLMCallFailed as exc:
+        raise SafetyReviewUnavailable(str(exc)) from exc
     except Exception as exc:
         raise SafetyReviewUnavailable(f"OpenAI call failed: {type(exc).__name__}") from exc
-
-    verdict = response.output_parsed
-    if verdict is None:
-        raise SafetyReviewUnavailable(
-            "model returned no usable structured output (refusal or empty response)"
-        )
-    return verdict
