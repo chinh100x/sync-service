@@ -9,7 +9,7 @@ No manifest, no divergence detection: a run always overwrites the far side's tra
 files with the near side's current content (after the secret scan and break check both
 pass). If the far side has its own edits outside this tool, they're overwritten with no
 warning — deliberately simpler than tracking state, at the cost of the "don't overwrite
-an outside contribution" guarantee earlier versions had. See design.md's v5 note.
+an outside contribution" guarantee earlier versions had. See design-history.md's v5 note.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def run_direction(
     # Reset far_repo to base_branch before touching it. Without this, a prior mapping
     # processed in the same run (or a prior breakcheck-halt) can leave far_repo checked
     # out on *its own* branch — nesting this mapping's commit inside that one's PR
-    # instead of both branching independently off base_branch. See design.md's v8 note.
+    # instead of both branching independently off base_branch. See design-history.md's v8 note.
     publish.checkout_base(far_repo, base_branch)
 
     branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
@@ -83,7 +83,7 @@ def run_direction(
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
 
     # Deliberately not the production commit message. It's free-form human text that
-    # never goes through scrub/secretscan — see design.md's v7 note. The SHA alone is
+    # never goes through scrub/secretscan — see design-history.md's v7 note. The SHA alone is
     # safe to expose (it's just a hash) and is enough to correlate back to the source
     # commit for anyone who already has access to that repo.
     commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
@@ -93,7 +93,7 @@ def run_direction(
         return "unchanged"
 
     # The PR title/body are the one place this tool tries to be human-readable rather
-    # than purely mechanical -- see design.md's v10 note. Everything fed into it is
+    # than purely mechanical -- see design-history.md's v10 note. Everything fed into it is
     # already-scrubbed, already-validated far-side content (this mapping's own
     # candidate diff, changed-file list, break-check outcome); it never touches
     # near_repo/production directly, and it can fail over to a fully deterministic

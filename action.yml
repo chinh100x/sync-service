@@ -1,5 +1,5 @@
 name: sync-service
-description: Propagate a commit between a production repo and its OSS counterpart, per architecture.md (v2, bidirectional)
+description: Propagate a commit between a production repo and its OSS target, per architecture.md (v2, bidirectional)
 inputs:
   config:
     description: The mapping config itself — inline YAML content (not a path), embedded directly in the calling workflow.
@@ -8,15 +8,15 @@ inputs:
     description: "forward = production -> OSS (this workflow lives in the production repo); reverse = OSS -> production (this workflow lives in the OSS repo)"
     required: false
     default: forward
-  counterpart-repo:
+  target-repo:
     description: "owner/repo of the *other* repository (OSS repo for a forward run; production repo for a reverse run)"
     required: true
-  counterpart-branch:
-    description: Counterpart repo's default branch
+  target-branch:
+    description: Target repo's default branch
     required: false
     default: main
-  counterpart-token:
-    description: Token with contents:write + pull_requests:write on counterpart-repo (GitHub App installation token or scoped PAT). For reverse, this must be scoped to the *production* repo, not the OSS repo.
+  target-token:
+    description: Token with contents:write + pull_requests:write on target-repo (GitHub App installation token or scoped PAT). For reverse, this must be scoped to the *production* repo, not the OSS repo.
     required: true
   base:
     description: Base SHA of the diff to consider (e.g. github.event.before)
@@ -40,16 +40,16 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout counterpart repo
+    - name: Checkout target repo
       uses: actions/checkout@v4
       with:
-        repository: ${{ inputs.counterpart-repo }}
-        ref: ${{ inputs.counterpart-branch }}
-        token: ${{ inputs.counterpart-token }}
+        repository: ${{ inputs.target-repo }}
+        ref: ${{ inputs.target-branch }}
+        token: ${{ inputs.target-token }}
         # actions/checkout refuses a path outside $GITHUB_WORKSPACE (security guard against
         # path traversal), so this has to live inside it — sync_service.scrub hardcodes an
         # exclude for this exact name so a whole-repo mapping never walks into it.
-        path: .sync-service-counterpart
+        path: .sync-service-target
         fetch-depth: 0
         # Without this, actions/checkout embeds the token directly into this checkout's
         # .git/config (http.<url>.extraheader) so *any* subsequent git command authenticates
@@ -85,7 +85,7 @@ runs:
     - name: Run sync
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.counterpart-token }}
+        GH_TOKEN: ${{ inputs.target-token }}
         # Only reaches pr_writer.py's own process -- breakcheck.py strips this name
         # (alongside GH_TOKEN/GITHUB_TOKEN) before running any far-side install/run
         # command, so break_check (which executes untrusted, far-side-authored
@@ -94,15 +94,15 @@ runs:
         OPENAI_PR_MODEL: ${{ inputs.openai-model }}
       run: |
         set -euo pipefail
-        COUNTERPART="${{ github.workspace }}/.sync-service-counterpart"
+        TARGET="${{ github.workspace }}/.sync-service-target"
         HERE="${{ github.workspace }}"
 
         if [ "${{ inputs.direction }}" = "forward" ]; then
-          SOURCE_REPO="$HERE"          # this workflow runs in the production repo
-          DEST_REPO="$COUNTERPART"     # counterpart is the OSS repo
+          SOURCE_REPO="$HERE"    # this workflow runs in the production repo
+          DEST_REPO="$TARGET"    # target is the OSS repo
         else
-          SOURCE_REPO="$COUNTERPART"   # counterpart is the production repo
-          DEST_REPO="$HERE"            # this workflow runs in the OSS repo
+          SOURCE_REPO="$TARGET"  # target is the production repo
+          DEST_REPO="$HERE"      # this workflow runs in the OSS repo
         fi
 
         sync-service run \
@@ -111,5 +111,5 @@ runs:
           --dest-repo "$DEST_REPO" \
           --base "${{ inputs.base }}" \
           --head "${{ inputs.head }}" \
-          --base-branch "${{ inputs.counterpart-branch }}" \
+          --base-branch "${{ inputs.target-branch }}" \
           --direction "${{ inputs.direction }}"

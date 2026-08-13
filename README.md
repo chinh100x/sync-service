@@ -1,6 +1,6 @@
 # sync-service
 
-Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. **There's no divergence detection** — a run always overwrites the far side's tracked files with the near side's current content; see design.md's v5 note for what that gives up (a real OST-5 acceptance criterion) and why it's a deliberate tradeoff for this use case, not a default recommendation. Full-repo tracking and reverse-sync are beyond OST-3's original v1 (downstream-only) scope; see design.md's "v2"–"v5" sections for the full history, including an auto-merge attempt that was tried and reverted.
+Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. **There's no divergence detection** — a run always overwrites the far side's tracked files with the near side's current content; see design-history.md's v5 note for what that gives up (a real OST-5 acceptance criterion) and why it's a deliberate tradeoff for this use case, not a default recommendation. Full-repo tracking and reverse-sync are beyond OST-3's original v1 (downstream-only) scope; see design-history.md's "v2"–"v5" sections for the full history, including an auto-merge attempt that was tried and reverted.
 
 This directory is a standalone project. It doesn't inherit CI/build conventions from any other repo.
 
@@ -14,7 +14,7 @@ src/sync_service/
 ├── scrub.py        exclude list + regex substitution, direction-agnostic (redact fwd, hydrate rev)
 ├── secretscan.py   demo secret-scan gate — swap for `gitleaks` in production, see DEPLOY.md
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
-├── pr_writer.py    optional LLM-written human-readable PR title/body -- see design.md's v10 note.
+├── pr_writer.py    optional LLM-written human-readable PR title/body -- see design-history.md's v10 note.
 │                   Off by default (`llm_pr.enabled`); deterministic fallback always available.
 ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
 └── notify.py       comment on the source commit when a run halts
@@ -51,7 +51,7 @@ It builds two throwaway local git repos in `/tmp` (`prod-repo`, `oss-repo`) and 
 | ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | Commit touches both `src/portmon/` and `src/brk/` → two PRs opened (dry-run print) | trigger fires per-mapping; `internal_reporting.py` excluded; `cag-mcp.internal` URL redacted to `<MCP_ENDPOINT>`                                                                             |
 | 2    | A hardcoded API key sneaks into `covenant.py`                                      | secret-scan gate halts the run, no PR, comment printed                                                                                                                                       |
-| 3    | An outside OSS edit, then a separate prod change to the same mapping               | **silently overwritten** — no divergence detection anymore, the next forward sync just replaces it. Deliberate tradeoff, not a bug — see design.md's v5 note. |
+| 3    | An outside OSS edit, then a separate prod change to the same mapping               | **silently overwritten** — no divergence detection anymore, the next forward sync just replaces it. Deliberate tradeoff, not a bug — see design-history.md's v5 note. |
 | 4    | `src/brk/mod.py` gets a real bug                                                   | break check runs it, fails, **working tree is reverted** — `brk/mod.py` on OSS main still has the old working code                                                                           |
 | 4b   | The bug gets fixed and pushed again                                                | forward sync succeeds on retry — design.md §3's retry path                                                                                                                                   |
 | 5    | Commit only touches `README.md`                                                    | no mapping matched → no-op                                                                                                                                                                   |

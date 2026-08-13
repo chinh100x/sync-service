@@ -4,7 +4,7 @@ public PR title/body. Advisory only: never part of the sync/security authority.
 Everything upstream of this module (mapping, scrub, secretscan, break_check) is
 unchanged and still fully deterministic. This module only runs after all of those
 have already passed -- it explains a change that's already been decided safe to
-propose, it never decides that itself. See design.md/architecture.md's v10 note.
+propose, it never decides that itself. See design-history.md/architecture.md's v10 note.
 
 Two writers share one interface (PRWriter):
 - DeterministicPRWriter: no network, no LLM, always available. Used when the

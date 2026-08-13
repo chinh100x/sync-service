@@ -3,7 +3,7 @@
 install/run come from the mapping config, but they execute against the far side's
 tracked content — which, for OSS -> production or a public repo's own contributions,
 is content this service didn't originate. It should never run with a write-capable
-token in its environment. See design.md's token-scoping note.
+token in its environment. See design-history.md's v6 note.
 """
 from __future__ import annotations
 

@@ -8,12 +8,12 @@ the shared tool working end to end against a throwaway repo pair first, *then*
 wire OST-4, *then* OST-5. Don't skip straight to production repos.
 
 **This is bidirectional (v2), beyond OST-3/4/5's current written scope** — see
-design.md's "v2" section for what that means and why it's called out separately.
+design-history.md's "v2" section for what that means and why it's called out separately.
 Everything below assumes you want both directions live; if you only want the
 original v1 (downstream-only) behavior, just skip §5 (the reverse workflow) and
 never enable `hydrate` in the mapping config — forward-only still works.
 
-**Read design.md's v5 note before deploying this against a real repo pair.**
+**Read design-history.md's v5 note before deploying this against a real repo pair.**
 There is no divergence detection anymore (removed entirely, not simplified) — a
 sync always overwrites the far side's tracked files with the near side's current
 content. [OST-5](https://linear.app/100xteam/issue/OST-5)'s "outside contributions
@@ -106,7 +106,7 @@ Concretely, for OST-4 that's the monitoring mapping; for OST-5 it's
 three 100xtools production sources.
 
 **`source`/`dest` are optional — omit both to track the whole repo** instead
-of a subdirectory (see design.md's v3 section). `.git` and the counterpart
+of a subdirectory (see design-history.md's v3 section). `.git` and the target
 checkout `action.yml` makes are always excluded regardless, but anything else
 that shouldn't cross — a real `.env`, an internal-only folder — needs its own
 entry in `exclude`. There's no wildcard support there: list exact paths, not
@@ -115,7 +115,7 @@ entry in `exclude`. There's no wildcard support there: list exact paths, not
 **No bootstrapping step needed anymore.** Earlier versions tracked a manifest
 per mapping and required seeding it before the first run in a new direction, or
 every pre-existing file at the mapped path would be treated as an unresolvable
-conflict. That tracking is gone as of v5 (see design.md's v5 note) — there's
+conflict. That tracking is gone as of v5 (see design-history.md's v5 note) — there's
 nothing to bootstrap, and the first run in either direction just works. The
 tradeoff is the one described at the top of this file: no protection against
 overwriting a change that landed on the far side outside this tool.
@@ -151,9 +151,9 @@ jobs:
                   install: "pip install -e ."
                   run: "portmon run --deal demo/ost6-deal-01"
           direction: forward
-          counterpart-repo: 100x-oss/portfolio-monitoring   # the OSS repo
-          counterpart-branch: main
-          counterpart-token: ${{ secrets.SYNC_SERVICE_DEST_TOKEN }}
+          target-repo: 100x-oss/portfolio-monitoring   # the OSS repo
+          target-branch: main
+          target-token: ${{ secrets.SYNC_SERVICE_DEST_TOKEN }}
           base: ${{ github.event.before }}
           head: ${{ github.sha }}
 ```
@@ -206,9 +206,9 @@ jobs:
                   install: "pip install -e ."
                   run: "portmon run --deal demo/ost6-deal-01"
           direction: reverse
-          counterpart-repo: 100x/portfolio-monitoring       # the production repo
-          counterpart-branch: main
-          counterpart-token: ${{ secrets.SYNC_SERVICE_PROD_TOKEN }}   # the *second* token from §1
+          target-repo: 100x/portfolio-monitoring       # the production repo
+          target-branch: main
+          target-token: ${{ secrets.SYNC_SERVICE_PROD_TOKEN }}   # the *second* token from §1
           base: ${{ github.event.before }}
           head: ${{ github.sha }}
 ```
@@ -231,7 +231,7 @@ tenant data in it.
 
 ## 7. Optional: human-readable PR titles/bodies via an LLM
 
-Off by default. `sync_service.pr_writer` (see design.md/architecture.md's v10 note)
+Off by default. `sync_service.pr_writer` (see design-history.md/architecture.md's v10 note)
 turns the deterministic PR title/body (`Sync <mapping> changes`, a bare file list)
 into readable prose -- **advisory only**, never part of the sync/security decision.
 It only ever sees this mapping's own already-scrubbed, already-validated candidate
@@ -246,7 +246,7 @@ To enable it:
    e.g. an environment named `production` -- and add `environment: production` to
    the calling workflow's job (not `action.yml`; composite actions don't have a job
    context of their own, this has to be set where the job is actually defined).
-3. Pass it through as an input, same pattern as `counterpart-token`:
+3. Pass it through as an input, same pattern as `target-token`:
    ```yaml
    jobs:
      sync:
@@ -278,7 +278,7 @@ effect on whether the sync itself succeeds.
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR
    (secret scan hit), an outside far-side edit getting silently overwritten
-   by the next sync (know this is expected — see design.md's v5 note, not a
+   by the next sync (know this is expected — see design-history.md's v5 note, not a
    bug to chase), a break check failure with a working-tree revert, and —
    if you're enabling §5 — an explicit `--direction reverse` run.
 2. **OST-4**: wire `sync/monitoring.yaml` into the monitoring production
@@ -289,10 +289,10 @@ effect on whether the sync itself succeeds.
    100xtools production sources, confirm one PR per tool (never batched).
    **Before wiring this one for real**: OST-5's own acceptance criteria
    require outside contributions on `main` not be overwritten — this version
-   doesn't do that (see design.md's v5 note) — decide explicitly whether
+   doesn't do that (see design-history.md's v5 note) — decide explicitly whether
    that's acceptable for this repo, or bring back divergence detection first.
 4. Only if OSS -> production is actually wanted (it's beyond OST-3/4/5's
-   current scope, see design.md's v2 section): add `hydrate` rules to the
+   current scope, see design-history.md's v2 section): add `hydrate` rules to the
    mapping config and wire §5's reverse workflow — no bootstrapping needed
    anymore — and confirm a real OSS contribution shows up as a real PR on
    the production repo.

@@ -14,9 +14,9 @@ from .config import RedactRule
 # of the tool itself, not a content decision. Relevant now that source/dest default to
 # the whole repo: without this, a full-repo mapping would try to copy the other repo's
 # .git internals, each side's own sync bookkeeping, and — since actions/checkout won't
-# place a checkout outside $GITHUB_WORKSPACE — the counterpart checkout action.yml makes,
+# place a checkout outside $GITHUB_WORKSPACE — the target checkout action.yml makes,
 # into the other repo's tree.
-_ALWAYS_EXCLUDE = {".git", ".sync-state", ".sync-service-counterpart"}
+_ALWAYS_EXCLUDE = {".git", ".sync-state", ".sync-service-target"}
 
 
 def apply(

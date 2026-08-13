@@ -55,12 +55,12 @@ def test_hydrate_reverses_a_redact_style_rule(tmp_path):
 
 def test_whole_repo_mapping_never_walks_mechanical_dirs(tmp_path):
     # A full-repo mapping (source=".") must never propagate git internals, the tool's
-    # own manifest, or the counterpart checkout action.yml places inside the workspace —
+    # own manifest, or the target checkout action.yml places inside the workspace —
     # regardless of the mapping's own exclude list (empty here on purpose).
     _write(tmp_path, "README.md", "hello\n")
     _write(tmp_path, ".git/HEAD", "ref: refs/heads/main\n")
     _write(tmp_path, ".sync-state/portmon.json", "{}\n")
-    _write(tmp_path, ".sync-service-counterpart/README.md", "the other repo's own content\n")
+    _write(tmp_path, ".sync-service-target/README.md", "the other repo's own content\n")
 
     desired, _categories = apply(tmp_path, ".", ".", exclude=[], transform_rules=[])
 

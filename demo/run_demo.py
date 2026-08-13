@@ -7,7 +7,7 @@ Walks through:
   STEP 3 — an outside OSS edit gets silently overwritten by the next forward sync.
            There's no manifest / conflict tracking anymore: a run always overwrites
            the far side's tracked files with the near side's current content. This
-           is the deliberate tradeoff of removing state — see design.md's v5 note.
+           is the deliberate tradeoff of removing state — see design-history.md's v5 note.
   STEP 4 — break check failure (forward), working tree reverted
   STEP 4b — bug fixed, forward sync succeeds on retry
   STEP 5 — no-op (touched file isn't under any mapping)
