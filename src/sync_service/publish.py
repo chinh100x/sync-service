@@ -29,12 +29,24 @@ def branch_exists(dest_repo: Path, branch: str) -> bool:
     return proc.returncode == 0
 
 
-def commit_to_branch(dest_repo: Path, branch: str, message: str) -> None:
+def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
     """Assumes dest_repo's working tree already has base_branch checked out with the
-    scrubbed + manifest changes pending (uncommitted). Moves them onto a new branch."""
+    scrubbed changes pending (uncommitted). Moves them onto a new branch.
+
+    Returns False (no branch left behind) if there was nothing to commit — the
+    propagated content was already byte-identical to what's on the far side. With
+    no manifest forcing a write every run, this is a real case, not just theoretical."""
     subprocess.run(["git", *_GIT_ID, "checkout", "-b", branch], cwd=dest_repo, check=True, capture_output=True)
     subprocess.run(["git", *_GIT_ID, "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
+
+    nothing_staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=dest_repo).returncode == 0
+    if nothing_staged:
+        subprocess.run(["git", *_GIT_ID, "checkout", "-"], cwd=dest_repo, check=True, capture_output=True)
+        subprocess.run(["git", *_GIT_ID, "branch", "-D", branch], cwd=dest_repo, check=True, capture_output=True)
+        return False
+
     subprocess.run(["git", *_GIT_ID, "commit", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+    return True
 
 
 def discard_working_tree_changes(dest_repo: Path) -> None:
