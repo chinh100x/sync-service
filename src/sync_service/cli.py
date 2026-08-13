@@ -76,6 +76,8 @@ def run_direction(
             safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
             enabled=llm_safety_review_enabled,
         )
+        if verdict is not None:
+            print(f"[safety-review:{mapping.key}] passed" if verdict.passed else f"[safety-review:{mapping.key}] blocked")
     except safety_review.SafetyReviewUnavailable as exc:
         notify.comment_on_commit(
             head_sha,
