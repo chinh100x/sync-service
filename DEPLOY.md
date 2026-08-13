@@ -273,7 +273,34 @@ omitting the secret, or any OpenAI-side failure (timeout, rate limit, bad auth,
 malformed output) all fall back to the plain deterministic PR title/body with no
 effect on whether the sync itself succeeds.
 
-## 8. Roll out in build order
+## 8. Optional: LLM semantic safety review
+
+Off by default. `sync_service.safety_review` (see design-history.md/architecture.md's
+v12 note) is a second, independent use of the same `OPENAI_API_KEY` -- but with the
+**opposite** failure behavior from §7's PR writer. Where the PR writer is cosmetic
+and always falls back safely, this is a security gate: it reviews the exact same
+scrubbed content `secretscan` already scans, looking for what a regex can't catch --
+a real customer name, an internal codename, proprietary logic in a comment -- and
+**any failure to get a verdict is a hard halt, no PR**, never treated as a pass.
+
+To enable it, alongside (or independent of) §7:
+
+1. Add `llm_safety_review: enabled: true` alongside `mappings:` in the mapping config.
+2. Same `OPENAI_API_KEY` / `environment: production` setup as §7 -- no second secret needed.
+3. Optional: `openai-safety-model` input / `OPENAI_SAFETY_MODEL` env override.
+
+Turning this on changes what a green vs. red run means: a run can now fail with
+exit 1 not just from a `git push`/`gh pr create` problem, but from the safety
+review itself being unreachable (bad key, API outage, or a mapping's current
+content simply being too large for one review pass -- it does not truncate and
+guess, see architecture.md's v12 note). That's deliberate -- a silent skip would
+be worse than no feature at all -- but it does mean this needs the same
+operational attention as any other required external dependency once it's on. A
+mapping being genuinely blocked by a real finding is a *different*, expected exit
+code (0, same bucket as a secret-scan hit) -- check the run's log/comment to tell
+the two apart, not just the exit code alone.
+
+## 9. Roll out in build order
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR

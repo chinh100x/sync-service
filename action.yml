@@ -37,6 +37,14 @@ inputs:
     description: Optional. Overrides pr_writer.py's default model choice.
     required: false
     default: ""
+  openai-safety-model:
+    description: >
+      Optional. Overrides safety_review.py's default model choice. Only used if a
+      mapping config sets `llm_safety_review.enabled: true`. Uses the same
+      `secrets.OPENAI_API_KEY` as the PR writer above -- unlike the PR writer,
+      enabling this without a working key is a hard failure, not a fallback.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -92,6 +100,7 @@ runs:
         # commands) never inherits it. See breakcheck.py's _STRIP_ENV_VARS note.
         OPENAI_API_KEY: ${{ inputs.openai-api-key }}
         OPENAI_PR_MODEL: ${{ inputs.openai-model }}
+        OPENAI_SAFETY_MODEL: ${{ inputs.openai-safety-model }}
       run: |
         set -euo pipefail
         TARGET="${{ github.workspace }}/.sync-service-target"

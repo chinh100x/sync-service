@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import breakcheck, diff, notify, pr_writer, publish, scrub, secretscan
+from . import breakcheck, diff, notify, pr_writer, publish, safety_review, scrub, secretscan
 from .config import BreakCheck, Mapping, RedactRule, SyncConfig
 
 
@@ -38,6 +38,7 @@ def run_direction(
     label: str,
     gh_token: str | None,
     llm_pr_enabled: bool,
+    llm_safety_review_enabled: bool,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
     # Reset far_repo to base_branch before touching it. Without this, a prior mapping
@@ -64,6 +65,31 @@ def run_direction(
             f"[{label}] secret scan hit in {mapping.key}: {hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
         )
         return "secret-halt"
+
+    # Same input, same point in the pipeline as secretscan.scan() above -- neither
+    # touches far_repo's working tree at all until both pass. Unlike pr_writer below,
+    # this fails *closed*: SafetyReviewUnavailable means "couldn't confirm this is
+    # safe," which is a hard halt, not an implicit pass. See safety_review.py's
+    # module docstring and design-history.md's v12 note.
+    try:
+        verdict = safety_review.review(
+            safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
+            enabled=llm_safety_review_enabled,
+        )
+    except safety_review.SafetyReviewUnavailable as exc:
+        notify.comment_on_commit(
+            head_sha,
+            f"[{label}] {mapping.key}: semantic safety review unavailable ({exc}) -- halted out of caution, no PR.",
+        )
+        return "safety-review-error"
+
+    if verdict is not None and not verdict.passed:
+        categories = f" (categories: {', '.join(verdict.categories)})" if verdict.categories else ""
+        notify.comment_on_commit(
+            head_sha,
+            f"[{label}] {mapping.key}: semantic safety review blocked this change: {verdict.summary}{categories}. Halted, no PR.",
+        )
+        return "safety-review-halt"
 
     for rel_path, text in desired.items():
         far_file = far_repo / rel_path
@@ -175,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="sync", label="sync", gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
+                    llm_safety_review_enabled=config.llm_safety_review.enabled,
                 )
             else:
                 outcome = run_direction(
@@ -184,14 +211,17 @@ def main(argv: list[str] | None = None) -> int:
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
+                    llm_safety_review_enabled=config.llm_safety_review.enabled,
                 )
             outcomes.append(outcome)
 
-        # A halt (secret/breakcheck/etc.) is the tool correctly enforcing policy --
-        # that's still exit 0. An actual publish failure (git push / gh pr create
-        # erroring) is a real failure of this run and must not be silently reported
-        # as success.
-        if "publish-failed" in outcomes:
+        # A halt the tool performed correctly (secret/breakcheck/safety-review-halt)
+        # is still exit 0 -- that's policy working as intended. A publish failure or
+        # a safety review that couldn't even run (misconfigured key, API error,
+        # content too large) is a real problem with this run and must not be
+        # silently reported as success -- see design-history.md's v9/v12 notes for
+        # why each of those distinctions exists.
+        if "publish-failed" in outcomes or "safety-review-error" in outcomes:
             return 1
         return 0
 

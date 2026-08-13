@@ -16,6 +16,9 @@ src/sync_service/
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
 ├── pr_writer.py    optional LLM-written human-readable PR title/body -- see design-history.md's v10 note.
 │                   Off by default (`llm_pr.enabled`); deterministic fallback always available.
+├── safety_review.py  optional LLM semantic safety review -- see design-history.md's v12 note.
+│                   Off by default (`llm_safety_review.enabled`); fails *closed* (halts) on
+│                   any error, unlike pr_writer.py -- this is a security gate, not cosmetic.
 ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
 └── notify.py       comment on the source commit when a run halts
 tests/              unit tests for diff/scrub/publish — no GitHub calls needed
@@ -37,7 +40,7 @@ Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, n
 ```bash
 uv run pytest -v
 ```
-36 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs and which categories actually fired), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`), `test_breakcheck.py`/`test_cli.py` (token/commit-message scoping), `test_pr_writer.py` (deterministic fallback on every OpenAI failure mode, and proof that production commit messages/excluded files/scrubbed values/secret matches never reach the model).
+50 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs and which categories actually fired), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`), `test_breakcheck.py`/`test_cli.py` (token/commit-message scoping), `test_pr_writer.py` (deterministic fallback on every OpenAI failure mode, and proof that production commit messages/excluded files/scrubbed values/secret matches never reach the model), `test_safety_review.py` (every failure mode is a hard halt, never an implicit pass, and the exit code distinguishes "blocked by a real finding" from "couldn't even check").
 
 ### 3. Run the end-to-end demo (the whole system, both directions)
 

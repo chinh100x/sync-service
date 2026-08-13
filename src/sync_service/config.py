@@ -78,9 +78,17 @@ class LLMPRConfig(BaseModel):
     enabled: bool = False
 
 
+class SafetyReviewConfig(BaseModel):
+    # Off by default. Unlike llm_pr, enabling this and then having it fail to run
+    # (missing key, API error, content too large) is NOT a safe fallback -- it's a
+    # hard halt, no PR. See safety_review.py's module docstring.
+    enabled: bool = False
+
+
 class SyncConfig(BaseModel):
     mappings: list[Mapping]
     llm_pr: LLMPRConfig = LLMPRConfig()
+    llm_safety_review: SafetyReviewConfig = SafetyReviewConfig()
 
     @model_validator(mode="after")
     def _non_overlapping_dest(self) -> Self:
