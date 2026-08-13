@@ -15,9 +15,13 @@ from pathlib import Path
 
 from .config import BreakCheck
 
-# Defense in depth: even if a token ends up in this process's environment some other
-# way, break_check's install/run commands never see it, regardless of who's calling.
-_STRIP_ENV_VARS = {"GH_TOKEN", "GITHUB_TOKEN"}
+# Defense in depth: even if a token/key ends up in this process's environment some
+# other way, break_check's install/run commands never see it, regardless of who's
+# calling. OPENAI_API_KEY joined this list when pr_writer.py started needing it in
+# the same "Run sync" step's env (action.yml) -- without this, break_check (which
+# runs untrusted, far-side-authored install/run commands) could read or exfiltrate
+# it exactly like GH_TOKEN before this list existed.
+_STRIP_ENV_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"}
 
 
 @dataclass

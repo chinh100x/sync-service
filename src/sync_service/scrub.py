@@ -25,17 +25,22 @@ def apply(
     dest: str,
     exclude: list[str],
     transform_rules: list[RedactRule],
-) -> dict[str, str]:
+) -> tuple[dict[str, str], list[str]]:
     """Copy repo_root/source -> dest with excludes dropped and transform_rules applied.
 
-    Returns {relative_dest_path: file_contents} for every file that survives.
+    Returns ({relative_dest_path: file_contents}, categories_triggered) -- the second
+    element is the sorted, deduped set of transform_rules[i].category for rules that
+    actually replaced something in at least one file (not just every category present
+    in config). Consumed by pr_writer.py's PRContext.scrubbed_categories -- a category
+    label, never the matched text itself.
     """
     source_root = repo_root / source
     excluded = {str(Path(p)) for p in exclude}
     desired: dict[str, str] = {}
+    categories: set[str] = set()
 
     if not source_root.exists():
-        return desired
+        return desired, []
 
     for path in sorted(source_root.rglob("*")):
         if path.is_dir():
@@ -53,9 +58,12 @@ def apply(
             continue  # binary files pass through untouched by substitution; skip in this demo
 
         for rule in transform_rules:
+            before = text
             text = rule.compiled.sub(rule.replace, text)
+            if text != before and rule.category:
+                categories.add(rule.category)
 
         rel_to_dest = Path(dest) / path.relative_to(source_root)
         desired[str(rel_to_dest)] = text
 
-    return desired
+    return desired, sorted(categories)

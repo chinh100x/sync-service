@@ -13,7 +13,7 @@ def _write(root: Path, rel: str, text: str) -> None:
 def test_exclude_drops_file(tmp_path):
     _write(tmp_path, "src/portmon/covenant.py", "print('ok')\n")
     _write(tmp_path, "src/portmon/internal_reporting.py", "print('internal')\n")
-    desired = apply(
+    desired, categories = apply(
         tmp_path,
         "src/portmon",
         "plugin",
@@ -22,21 +22,34 @@ def test_exclude_drops_file(tmp_path):
     )
     assert "plugin/covenant.py" in desired
     assert "plugin/internal_reporting.py" not in desired
+    assert categories == []
 
 
 def test_redact_replaces_pattern(tmp_path):
     _write(tmp_path, "src/portmon/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
     rule = RedactRule(pattern=r"https://cag-mcp\.internal[^\s\"]*", replace="<MCP_ENDPOINT>")
-    desired = apply(tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[rule])
+    desired, categories = apply(tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[rule])
     assert "<MCP_ENDPOINT>" in desired["plugin/covenant.py"]
     assert "cag-mcp.internal" not in desired["plugin/covenant.py"]
+    assert categories == []  # rule fired but has no `category` label
+
+
+def test_redact_reports_triggered_category_only_when_a_rule_actually_fires(tmp_path):
+    _write(tmp_path, "src/portmon/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
+    _write(tmp_path, "src/portmon/other.py", "no endpoint here\n")
+    fired = RedactRule(pattern=r"https://cag-mcp\.internal[^\s\"]*", replace="<MCP_ENDPOINT>", category="internal_endpoint")
+    never_fires = RedactRule(pattern=r"NEVER_PRESENT_TOKEN", replace="<X>", category="tenant_config")
+    desired, categories = apply(
+        tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[fired, never_fires]
+    )
+    assert categories == ["internal_endpoint"]  # never_fires's category is absent -- it never matched anything
 
 
 def test_hydrate_reverses_a_redact_style_rule(tmp_path):
     # same mechanism, opposite direction: placeholder -> real value
     _write(tmp_path, "plugin/covenant.py", 'ENDPOINT = "<MCP_ENDPOINT>"\n')
     rule = RedactRule(pattern=r"<MCP_ENDPOINT>", replace="https://cag-mcp.internal/v1/report")
-    desired = apply(tmp_path, "plugin", "src/portmon", exclude=[], transform_rules=[rule])
+    desired, _categories = apply(tmp_path, "plugin", "src/portmon", exclude=[], transform_rules=[rule])
     assert "https://cag-mcp.internal/v1/report" in desired["src/portmon/covenant.py"]
 
 
@@ -49,6 +62,6 @@ def test_whole_repo_mapping_never_walks_mechanical_dirs(tmp_path):
     _write(tmp_path, ".sync-state/portmon.json", "{}\n")
     _write(tmp_path, ".sync-service-counterpart/README.md", "the other repo's own content\n")
 
-    desired = apply(tmp_path, ".", ".", exclude=[], transform_rules=[])
+    desired, _categories = apply(tmp_path, ".", ".", exclude=[], transform_rules=[])
 
     assert desired == {"README.md": "hello\n"}

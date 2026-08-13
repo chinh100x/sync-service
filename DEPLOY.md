@@ -229,7 +229,51 @@ scratch directory and shell out to `gitleaks detect --no-git --source
 gate. Do this before pointing the workflow at a production repo with real
 tenant data in it.
 
-## 7. Roll out in build order
+## 7. Optional: human-readable PR titles/bodies via an LLM
+
+Off by default. `sync_service.pr_writer` (see design.md/architecture.md's v10 note)
+turns the deterministic PR title/body (`Sync <mapping> changes`, a bare file list)
+into readable prose -- **advisory only**, never part of the sync/security decision.
+It only ever sees this mapping's own already-scrubbed, already-validated candidate
+diff (via `git diff` on the *far* repo, never the near/production repo directly),
+never the production commit message, never anything scrub/secretscan already
+stripped, never a secret-scan hit (it doesn't run at all on a halted mapping).
+
+To enable it:
+
+1. Add `llm_pr: enabled: true` alongside `mappings:` in the mapping config.
+2. Put `OPENAI_API_KEY` in a GitHub **Environment** (not a plain repo/org secret) --
+   e.g. an environment named `production` -- and add `environment: production` to
+   the calling workflow's job (not `action.yml`; composite actions don't have a job
+   context of their own, this has to be set where the job is actually defined).
+3. Pass it through as an input, same pattern as `counterpart-token`:
+   ```yaml
+   jobs:
+     sync:
+       runs-on: ubuntu-latest
+       environment: production
+       steps:
+         - uses: chinh100x/sync-service@main
+           with:
+             config: |
+               mappings: [...]
+               llm_pr:
+                 enabled: true
+             openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+             # ...the rest as in §4
+   ```
+4. Optional: `openai-model` input / `OPENAI_PR_MODEL` env override if you don't want
+   `pr_writer.py`'s built-in default.
+
+Nothing about this key is persisted anywhere, and `breakcheck.py` strips it (with
+`GH_TOKEN`/`GITHUB_TOKEN`) before running any far-side install/run command -- the
+same reasoning as v9's credential-persistence fix, extended to this key.
+`OPENAI_API_KEY` is never required: leaving `llm_pr.enabled: false` (the default),
+omitting the secret, or any OpenAI-side failure (timeout, rate limit, bad auth,
+malformed output) all fall back to the plain deterministic PR title/body with no
+effect on whether the sync itself succeeds.
+
+## 8. Roll out in build order
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR

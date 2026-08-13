@@ -16,6 +16,12 @@ from pydantic import BaseModel, field_validator, model_validator
 class RedactRule(BaseModel):
     pattern: str
     replace: str
+    # Optional label for what kind of thing this rule strips (e.g. "tenant_config",
+    # "internal_endpoint") -- never the matched value itself, just a category name.
+    # Surfaced to the LLM PR writer (pr_writer.py) as scrubbed_categories so a PR body
+    # can truthfully say "production-specific configuration was excluded" without
+    # ever naming what it was.
+    category: str | None = None
 
     @field_validator("pattern")
     @classmethod
@@ -63,8 +69,18 @@ class Mapping(BaseModel):
         return v
 
 
+class LLMPRConfig(BaseModel):
+    # Off by default: the PR title/body stay fully deterministic (pr_writer.py's
+    # DeterministicPRWriter) unless a mapping config explicitly opts in. Enabling this
+    # never makes OpenAI availability a dependency of the sync itself -- pr_writer.py
+    # falls back to the deterministic writer on any failure, missing key, or when
+    # this is False.
+    enabled: bool = False
+
+
 class SyncConfig(BaseModel):
     mappings: list[Mapping]
+    llm_pr: LLMPRConfig = LLMPRConfig()
 
     @model_validator(mode="after")
     def _non_overlapping_dest(self) -> Self:

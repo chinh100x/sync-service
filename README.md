@@ -14,6 +14,8 @@ src/sync_service/
 ├── scrub.py        exclude list + regex substitution, direction-agnostic (redact fwd, hydrate rev)
 ├── secretscan.py   demo secret-scan gate — swap for `gitleaks` in production, see DEPLOY.md
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
+├── pr_writer.py    optional LLM-written human-readable PR title/body -- see design.md's v10 note.
+│                   Off by default (`llm_pr.enabled`); deterministic fallback always available.
 ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
 └── notify.py       comment on the source commit when a run halts
 tests/              unit tests for diff/scrub/publish — no GitHub calls needed
@@ -35,7 +37,7 @@ Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, n
 ```bash
 uv run pytest -v
 ```
-11 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`).
+36 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs and which categories actually fired), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`), `test_breakcheck.py`/`test_cli.py` (token/commit-message scoping), `test_pr_writer.py` (deterministic fallback on every OpenAI failure mode, and proof that production commit messages/excluded files/scrubbed values/secret matches never reach the model).
 
 ### 3. Run the end-to-end demo (the whole system, both directions)
 

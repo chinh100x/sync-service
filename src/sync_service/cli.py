@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import breakcheck, diff, notify, publish, scrub, secretscan
+from . import breakcheck, diff, notify, pr_writer, publish, scrub, secretscan
 from .config import BreakCheck, Mapping, RedactRule, SyncConfig
 
 
@@ -37,6 +37,7 @@ def run_direction(
     branch_prefix: str,
     label: str,
     gh_token: str | None,
+    llm_pr_enabled: bool,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
     # Reset far_repo to base_branch before touching it. Without this, a prior mapping
@@ -50,7 +51,7 @@ def run_direction(
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
         return "skipped-exists"
 
-    desired = scrub.apply(near_repo, near_path, far_path, near_exclude, near_rules)
+    desired, scrubbed_categories = scrub.apply(near_repo, near_path, far_path, near_exclude, near_rules)
     if not desired:
         print(f"[{label}:{mapping.key}] nothing under {near_path}/ to propagate")
         return "empty"
@@ -78,28 +79,40 @@ def run_direction(
             )
             publish.discard_working_tree_changes(far_repo)
             return "breakcheck-halt"
-        break_note = "Break check passed."
     else:
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
-        break_note = "No break check configured for this direction."
 
     # Deliberately not the production commit message. It's free-form human text that
     # never goes through scrub/secretscan — see design.md's v7 note. The SHA alone is
     # safe to expose (it's just a hash) and is enough to correlate back to the source
     # commit for anyone who already has access to that repo.
-    title = f"[{label}] {mapping.key} @ {head_sha[:12]}"
     commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
     committed = publish.commit_to_branch(far_repo, branch, message=commit_message)
     if not committed:
         print(f"[{label}:{mapping.key}] nothing changed vs the far side — no PR")
         return "unchanged"
-    why = f"Why this propagates: {mapping.public_reason}\n\n" if mapping.public_reason else ""
-    body = (
-        f"Automated {label} sync, mapping `{mapping.key}` (`{near_path}` -> `{far_path}`).\n\n"
-        f"{why}"
-        f"Files changed: {', '.join(sorted(desired))}\n\n"
-        f"{break_note} Nothing auto-merges — human review required."
+
+    # The PR title/body are the one place this tool tries to be human-readable rather
+    # than purely mechanical -- see design.md's v10 note. Everything fed into it is
+    # already-scrubbed, already-validated far-side content (this mapping's own
+    # candidate diff, changed-file list, break-check outcome); it never touches
+    # near_repo/production directly, and it can fail over to a fully deterministic
+    # title/body with no effect on whether the sync itself succeeds.
+    validated = far_break_check is not None
+    context = pr_writer.PRContext(
+        mapping_key=mapping.key,
+        public_reason=mapping.public_reason,
+        changed_files=sorted(desired),
+        sanitized_diff=diff.candidate_diff(far_repo, base_branch, branch),
+        scrubbed_categories=scrubbed_categories,
+        validation=pr_writer.ValidationSummary(
+            secret_scan="passed",  # reaching this point already required an empty `hits`
+            install="passed" if validated else "skipped",
+            run="passed" if validated else "skipped",
+        ),
+        source_sha=head_sha[:12],
     )
+    title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
     if not result.success:
@@ -161,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                     far_repo=dest_repo, far_path=m.dest, far_break_check=m.break_check,
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="sync", label="sync", gh_token=gh_token,
+                    llm_pr_enabled=config.llm_pr.enabled,
                 )
             else:
                 outcome = run_direction(
@@ -169,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
                     far_repo=source_repo, far_path=m.source, far_break_check=m.reverse_break_check,
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
+                    llm_pr_enabled=config.llm_pr.enabled,
                 )
             outcomes.append(outcome)
 

@@ -19,6 +19,23 @@ def changed_files(repo_path: str | Path, base: str, head: str) -> list[str]:
     return [line for line in out.stdout.splitlines() if line]
 
 
+def candidate_diff(far_repo: str | Path, base_branch: str, branch: str) -> str:
+    """Unified diff of the OSS candidate actually committed -- `git diff` entirely
+    within far_repo's own history (base_branch vs. the just-created sync branch).
+    Never reads near_repo/production at all, by construction: this only sees what
+    scrub.apply() already wrote to far_repo, after redaction/exclusion. Used to build
+    pr_writer.py's PRContext.sanitized_diff -- the one thing an LLM PR writer is
+    allowed to see of the actual code change.
+    """
+    proc = subprocess.run(
+        ["git", "diff", f"{base_branch}..{branch}"],
+        cwd=far_repo,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout
+
+
 def match(files: list[str], mappings: list[Mapping], path_attr: str = "source") -> dict[str, list[str]]:
     """mapping.key -> touched files under mapping.<path_attr>, for mappings actually touched.
 
