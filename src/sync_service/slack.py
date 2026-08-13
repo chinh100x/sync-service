@@ -1,5 +1,9 @@
 """Slack notifications — a second, best-effort channel alongside notify.py's GitHub
-commit comments. Posts to an Incoming Webhook URL configured via SLACK_WEBHOOK_URL.
+commit comments. Posts to an Incoming Webhook URL configured via SLACK_WEBHOOK_URL,
+optionally directed at a specific channel via SLACK_CHANNEL (only meaningful if the
+webhook's own app is configured to honor a channel override -- some are, some
+aren't; harmless to set either way, since Slack just ignores an override its app
+doesn't support rather than rejecting the request).
 
 Best-effort by design: Slack availability must never become a dependency of the
 sync succeeding, so every failure (no webhook configured, network error, a non-2xx
@@ -22,8 +26,12 @@ def post(text: str) -> bool:
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
     if not webhook_url:
         return False
+    payload = {"text": text}
+    channel = os.environ.get("SLACK_CHANNEL")
+    if channel:
+        payload["channel"] = channel
     try:
-        body = json.dumps({"text": text}).encode("utf-8")
+        body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             webhook_url, data=body, headers={"Content-Type": "application/json"}
         )

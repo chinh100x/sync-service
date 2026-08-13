@@ -320,8 +320,13 @@ To enable it:
    - uses: chinh100x/sync-service@main
      with:
        slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+       slack-channel: ${{ secrets.SLACK_CHANNEL }}   # optional -- only some webhook
+                                                       # apps honor a channel override
        # ...the rest as in §4
    ```
+
+`slack-channel` is optional and independent of the webhook URL itself -- omit it
+to just post wherever the webhook was originally configured to post.
 
 This does **not** give the tool any awareness of a PR going stale or conflicting
 after it's opened -- sync-service's job still ends the moment a PR is created
