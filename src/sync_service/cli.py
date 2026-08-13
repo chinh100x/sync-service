@@ -14,6 +14,7 @@ an outside contribution" guarantee earlier versions had. See design.md's v5 note
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def run_direction(
     base_branch: str,
     branch_prefix: str,
     label: str,
+    gh_token: str | None,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
     branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
@@ -86,7 +88,7 @@ def run_direction(
         f"Files changed: {', '.join(sorted(desired))}\n\n"
         f"{break_note} Nothing auto-merges — human review required."
     )
-    result = publish.open_pr(far_repo, branch, base_branch, title, body)
+    result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result}")
     return "opened"
 
@@ -111,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    # Captured and removed from the ambient environment before anything else runs --
+    # in particular before breakcheck.run() executes any far-side install/run command.
+    # Only publish.open_pr()'s one gh pr create call gets it back, explicitly.
+    gh_token = os.environ.pop("GH_TOKEN", None)
 
     if args.command == "run":
         config = SyncConfig.load(args.config)
@@ -138,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                     near_repo=source_repo, near_path=m.source, near_exclude=m.exclude, near_rules=m.redact,
                     far_repo=dest_repo, far_path=m.dest, far_break_check=m.break_check,
                     head_sha=args.head, base_branch=args.base_branch,
-                    branch_prefix="sync", label="sync",
+                    branch_prefix="sync", label="sync", gh_token=gh_token,
                 )
             else:
                 run_direction(
@@ -146,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
                     near_repo=dest_repo, near_path=m.dest, near_exclude=m.exclude, near_rules=m.hydrate,
                     far_repo=source_repo, far_path=m.source, far_break_check=m.reverse_break_check,
                     head_sha=args.head, base_branch=args.base_branch,
-                    branch_prefix="reverse-sync", label="reverse-sync",
+                    branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
                 )
         return 0
 

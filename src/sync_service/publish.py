@@ -54,9 +54,15 @@ def discard_working_tree_changes(dest_repo: Path) -> None:
     subprocess.run(["git", "clean", "-fd"], cwd=dest_repo, capture_output=True)
 
 
-def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str) -> str:
+def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> str:
     """Returns a human-readable result. Uses `gh pr create` if a remote + gh are configured,
-    otherwise returns the PR body as a dry-run description (this is the demo's path)."""
+    otherwise returns the PR body as a dry-run description (this is the demo's path).
+
+    `git push` needs no explicit token — the counterpart checkout already carries an
+    authenticated credential from `actions/checkout`'s own `token:` input, embedded in
+    that checkout's git config. Only `gh pr create` needs `GH_TOKEN` as an env var, since
+    `gh` does its own auth lookup rather than reading git's embedded credential. So the
+    token is injected only for that one subprocess call, not the ambient environment."""
     has_gh = shutil.which("gh") is not None
     has_remote = subprocess.run(
         ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
@@ -72,6 +78,7 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
         if push.returncode != 0:
             return f"git push failed: {push.stderr.strip()}"
 
+        gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
         proc = subprocess.run(
             [
                 "gh", "pr", "create",
@@ -83,6 +90,7 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
             cwd=dest_repo,
             capture_output=True,
             text=True,
+            env=gh_env,
         )
         if proc.returncode == 0:
             return proc.stdout.strip()
