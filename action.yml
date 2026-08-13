@@ -53,7 +53,13 @@ runs:
 
     - name: Install sync-service
       shell: bash
-      run: uv tool install "git+https://github.com/chinh100x/sync-service"
+      # From the checked-out action directory itself, not a re-fetch by URL. Pinning
+      # the caller's `uses: chinh100x/sync-service@<sha>` only pins *this file* --
+      # a separate `git+https://...` install with no ref always pulls whatever is
+      # currently on main, so the actual Python implementation was never pinned by
+      # that SHA at all. github.action_path is exactly the checkout that SHA resolved
+      # to, so installing from there makes the two inseparable.
+      run: uv tool install "${{ github.action_path }}"
 
     - name: Run sync
       shell: bash

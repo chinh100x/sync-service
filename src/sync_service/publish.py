@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 # Identity for the sync commits themselves — a CI runner has no git identity configured
@@ -19,14 +20,36 @@ def branch_name(namespace: str, head_sha: str) -> str:
     return f"{namespace}/{head_sha[:12]}"
 
 
+def checkout_base(dest_repo: Path, base_branch: str) -> None:
+    """Reset dest_repo to base_branch before processing a mapping. Required when a
+    single run handles multiple mappings against the same far_repo checkout — without
+    this, the second mapping's commit_to_branch() would branch off whatever the first
+    mapping's branch left HEAD on, nesting one mapping's commit inside the other's PR
+    instead of both branching independently off base_branch."""
+    subprocess.run(["git", *_GIT_ID, "checkout", base_branch], cwd=dest_repo, check=True, capture_output=True)
+
+
 def branch_exists(dest_repo: Path, branch: str) -> bool:
-    proc = subprocess.run(
+    """Checks both local and remote — a fresh Action runner's checkout has no local
+    knowledge of a branch a previous run pushed, only main's own history. Without the
+    remote check, idempotency silently stops working the moment this runs on CI instead
+    of a long-lived local clone."""
+    local = subprocess.run(
         ["git", "rev-parse", "--verify", branch],
         cwd=dest_repo,
         capture_output=True,
         text=True,
     )
-    return proc.returncode == 0
+    if local.returncode == 0:
+        return True
+
+    remote = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"],
+        cwd=dest_repo,
+        capture_output=True,
+        text=True,
+    )
+    return remote.returncode == 0
 
 
 def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
@@ -54,9 +77,16 @@ def discard_working_tree_changes(dest_repo: Path) -> None:
     subprocess.run(["git", "clean", "-fd"], cwd=dest_repo, capture_output=True)
 
 
-def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> str:
-    """Returns a human-readable result. Uses `gh pr create` if a remote + gh are configured,
-    otherwise returns the PR body as a dry-run description (this is the demo's path).
+@dataclass
+class PublishResult:
+    success: bool
+    message: str
+
+
+def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> PublishResult:
+    """Uses `gh pr create` if a remote + gh are configured, otherwise returns the PR
+    body as a dry-run description (this is the demo's path) -- dry-run counts as
+    success, since nothing was supposed to happen for real.
 
     `git push` needs no explicit token — the counterpart checkout already carries an
     authenticated credential from `actions/checkout`'s own `token:` input, embedded in
@@ -76,7 +106,7 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
             text=True,
         )
         if push.returncode != 0:
-            return f"git push failed: {push.stderr.strip()}"
+            return PublishResult(False, f"git push failed: {push.stderr.strip()}")
 
         gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
         proc = subprocess.run(
@@ -93,10 +123,11 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
             env=gh_env,
         )
         if proc.returncode == 0:
-            return proc.stdout.strip()
-        return f"gh pr create failed: {proc.stderr.strip()}"
+            return PublishResult(True, proc.stdout.strip())
+        return PublishResult(False, f"gh pr create failed: {proc.stderr.strip()}")
 
-    return (
+    return PublishResult(
+        True,
         f"[dry-run: no remote configured] Would open PR {branch} -> {base_branch}\n"
-        f"Title: {title}\n\n{body}"
+        f"Title: {title}\n\n{body}",
     )

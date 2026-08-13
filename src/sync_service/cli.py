@@ -39,6 +39,12 @@ def run_direction(
     gh_token: str | None,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
+    # Reset far_repo to base_branch before touching it. Without this, a prior mapping
+    # processed in the same run (or a prior breakcheck-halt) can leave far_repo checked
+    # out on *its own* branch — nesting this mapping's commit inside that one's PR
+    # instead of both branching independently off base_branch. See design.md's v8 note.
+    publish.checkout_base(far_repo, base_branch)
+
     branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
     if publish.branch_exists(far_repo, branch):
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
@@ -87,13 +93,17 @@ def run_direction(
     if not committed:
         print(f"[{label}:{mapping.key}] nothing changed vs the far side — no PR")
         return "unchanged"
+    why = f"Why this propagates: {mapping.public_reason}\n\n" if mapping.public_reason else ""
     body = (
         f"Automated {label} sync, mapping `{mapping.key}` (`{near_path}` -> `{far_path}`).\n\n"
+        f"{why}"
         f"Files changed: {', '.join(sorted(desired))}\n\n"
         f"{break_note} Nothing auto-merges — human review required."
     )
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
-    print(f"[{label}:{mapping.key}] {result}")
+    print(f"[{label}:{mapping.key}] {result.message}")
+    if not result.success:
+        return "publish-failed"
     return "opened"
 
 
@@ -141,10 +151,11 @@ def main(argv: list[str] | None = None) -> int:
             print("no mapping touched — no-op")
             return 0
 
+        outcomes = []
         for key in hits:
             m = by_mapping[key]
             if args.direction == "forward":
-                run_direction(
+                outcome = run_direction(
                     mapping=m,
                     near_repo=source_repo, near_path=m.source, near_exclude=m.exclude, near_rules=m.redact,
                     far_repo=dest_repo, far_path=m.dest, far_break_check=m.break_check,
@@ -152,13 +163,21 @@ def main(argv: list[str] | None = None) -> int:
                     branch_prefix="sync", label="sync", gh_token=gh_token,
                 )
             else:
-                run_direction(
+                outcome = run_direction(
                     mapping=m,
                     near_repo=dest_repo, near_path=m.dest, near_exclude=m.exclude, near_rules=m.hydrate,
                     far_repo=source_repo, far_path=m.source, far_break_check=m.reverse_break_check,
                     head_sha=args.head, base_branch=args.base_branch,
                     branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
                 )
+            outcomes.append(outcome)
+
+        # A halt (secret/breakcheck/etc.) is the tool correctly enforcing policy --
+        # that's still exit 0. An actual publish failure (git push / gh pr create
+        # erroring) is a real failure of this run and must not be silently reported
+        # as success.
+        if "publish-failed" in outcomes:
+            return 1
         return 0
 
     return 1

@@ -48,6 +48,12 @@ class Mapping(BaseModel):
     # "run" command the way OSS demo/smoke commands do) — omit to skip and rely on the
     # production repo's own CI as the safety net for that direction.
     reverse_break_check: BreakCheck | None = None
+    # A human-authored, static line explaining why this mapping propagates at all --
+    # written once for public consumption, same as `key`/`source`/`dest` already are.
+    # Not derived from any commit: the PR body needs *some* safe "why" (see v7's note
+    # on why the production commit message can't be that), and this is the one place
+    # free text can appear without it coming from an uncontrolled source.
+    public_reason: str | None = None
 
     @field_validator("dest")
     @classmethod

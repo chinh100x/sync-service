@@ -76,3 +76,47 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
     far_side_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
     assert SENSITIVE_TEXT not in far_side_message
     assert "RockyMountain" not in far_side_message
+
+
+def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+    # A remote that's configured but unreachable -- has_remote is True (so open_pr
+    # takes the "real" path, not the dry-run print), but the push itself fails.
+    _git(oss, "remote", "add", "origin", "/nonexistent/path/that/does/not/exist.git")
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--config", str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo", str(prod),
+            "--dest-repo", str(oss),
+            "--base", base,
+            "--head", head,
+        ]
+    )
+
+    assert exit_code == 1

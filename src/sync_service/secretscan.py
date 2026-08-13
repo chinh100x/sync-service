@@ -16,14 +16,16 @@ _PATTERNS = {
 
 
 class SecretHit(dict):
-    """{"path": ..., "rule": ..., "match": ...}"""
+    """{"path": ..., "rule": ...} — deliberately no matched value. A hit needs to be
+    logged/printed so a human can find and fix it, and anything printable eventually
+    gets printed somewhere (a log, a comment) — so the actual secret text never enters
+    this structure in the first place, rather than trusting every caller not to."""
 
 
 def scan(desired: dict[str, str]) -> list[SecretHit]:
     hits: list[SecretHit] = []
     for path, text in desired.items():
         for rule_name, pattern in _PATTERNS.items():
-            m = pattern.search(text)
-            if m:
-                hits.append(SecretHit(path=path, rule=rule_name, match=m.group(0)[:40]))
+            if pattern.search(text):
+                hits.append(SecretHit(path=path, rule=rule_name))
     return hits
