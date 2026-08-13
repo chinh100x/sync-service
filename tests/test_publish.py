@@ -81,3 +81,19 @@ def test_branch_exists_checks_the_remote_too(tmp_path):
 
     assert publish.branch_exists(fresh, "sync/x/aaaaaaaaaaaa") is True  # remote-only, not local
     assert publish.branch_exists(fresh, "sync/x/does-not-exist") is False
+
+
+def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):
+    # A remote being configured means a real publish was intended -- if `gh` isn't
+    # available to do it, that must surface as a failure, never a silent dry-run
+    # reported as success. Independent of whether `gh` happens to be installed
+    # wherever this test runs: shutil.which is forced to report it as absent.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "remote", "add", "origin", "/nonexistent/path/does-not-matter.git")
+    monkeypatch.setattr(publish.shutil, "which", lambda _name: None)
+
+    result = publish.open_pr(repo, "sync/x/abc123", "main", "title", "body")
+
+    assert result.success is False
+    assert "gh" in result.message.lower()

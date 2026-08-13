@@ -2,11 +2,19 @@
 when available, otherwise the PR body is printed (dry-run, e.g. this demo)."""
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _basic_auth_header(token: str) -> str:
+    """A one-off `-c http.extraheader=...` value for a single git invocation — never
+    written to any .git/config, unlike actions/checkout's persisted-credential mode."""
+    encoded = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return f"AUTHORIZATION: basic {encoded}"
 
 # Identity for the sync commits themselves — a CI runner has no git identity configured
 # by default. Override via env if the org wants a different bot identity/name.
@@ -84,50 +92,57 @@ class PublishResult:
 
 
 def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> PublishResult:
-    """Uses `gh pr create` if a remote + gh are configured, otherwise returns the PR
-    body as a dry-run description (this is the demo's path) -- dry-run counts as
-    success, since nothing was supposed to happen for real.
+    """Uses `gh pr create` if a remote is configured, otherwise returns the PR body as
+    a dry-run description (this is the demo's path) -- dry-run counts as success, since
+    nothing was supposed to happen for real.
 
-    `git push` needs no explicit token — the counterpart checkout already carries an
-    authenticated credential from `actions/checkout`'s own `token:` input, embedded in
-    that checkout's git config. Only `gh pr create` needs `GH_TOKEN` as an env var, since
-    `gh` does its own auth lookup rather than reading git's embedded credential. So the
-    token is injected only for that one subprocess call, not the ambient environment."""
-    has_gh = shutil.which("gh") is not None
+    `git push` authenticates via an explicit, single-invocation `-c http.extraheader`
+    built from `token` when one's given — never via a persisted checkout credential
+    (action.yml sets `persist-credentials: false` for exactly this reason: a persisted
+    credential sits in plaintext in .git/config, readable by anything with this
+    checkout's cwd, including break_check's install/run commands). Only `gh pr create`
+    additionally needs `GH_TOKEN` as an env var, scoped to just that one subprocess call.
+
+    "No remote configured" and "remote configured but `gh` is missing" are deliberately
+    different outcomes: the former is a legitimate local/demo scenario (dry-run,
+    success); the latter means a real publish was intended and the environment can't do
+    it — that must be a failure, not a silent dry-run reported as success."""
     has_remote = subprocess.run(
         ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
     ).stdout.strip() != ""
 
-    if has_gh and has_remote:
-        push = subprocess.run(
-            ["git", "push", "-u", "origin", branch],
-            cwd=dest_repo,
-            capture_output=True,
-            text=True,
+    if not has_remote:
+        return PublishResult(
+            True,
+            f"[dry-run: no remote configured] Would open PR {branch} -> {base_branch}\n"
+            f"Title: {title}\n\n{body}",
         )
-        if push.returncode != 0:
-            return PublishResult(False, f"git push failed: {push.stderr.strip()}")
 
-        gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
-        proc = subprocess.run(
-            [
-                "gh", "pr", "create",
-                "--base", base_branch,
-                "--head", branch,
-                "--title", title,
-                "--body", body,
-            ],
-            cwd=dest_repo,
-            capture_output=True,
-            text=True,
-            env=gh_env,
-        )
-        if proc.returncode == 0:
-            return PublishResult(True, proc.stdout.strip())
-        return PublishResult(False, f"gh pr create failed: {proc.stderr.strip()}")
+    if shutil.which("gh") is None:
+        return PublishResult(False, "gh CLI not found, but a remote is configured — cannot publish")
 
-    return PublishResult(
-        True,
-        f"[dry-run: no remote configured] Would open PR {branch} -> {base_branch}\n"
-        f"Title: {title}\n\n{body}",
+    push_cmd = ["git"]
+    if token:
+        push_cmd += ["-c", f"http.extraheader={_basic_auth_header(token)}"]
+    push_cmd += ["push", "-u", "origin", branch]
+    push = subprocess.run(push_cmd, cwd=dest_repo, capture_output=True, text=True)
+    if push.returncode != 0:
+        return PublishResult(False, f"git push failed: {push.stderr.strip()}")
+
+    gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
+    proc = subprocess.run(
+        [
+            "gh", "pr", "create",
+            "--base", base_branch,
+            "--head", branch,
+            "--title", title,
+            "--body", body,
+        ],
+        cwd=dest_repo,
+        capture_output=True,
+        text=True,
+        env=gh_env,
     )
+    if proc.returncode == 0:
+        return PublishResult(True, proc.stdout.strip())
+    return PublishResult(False, f"gh pr create failed: {proc.stderr.strip()}")

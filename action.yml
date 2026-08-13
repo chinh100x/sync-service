@@ -38,6 +38,14 @@ runs:
         # exclude for this exact name so a whole-repo mapping never walks into it.
         path: .sync-service-counterpart
         fetch-depth: 0
+        # Without this, actions/checkout embeds the token directly into this checkout's
+        # .git/config (http.<url>.extraheader) so *any* subsequent git command authenticates
+        # automatically -- including break_check's install/run commands, which have this
+        # exact directory as their cwd and can read that file as easily as `cat .git/config`.
+        # Popping GH_TOKEN out of the process environment (v6) didn't touch this at all; the
+        # credential was sitting on disk the whole time. publish.py now authenticates the one
+        # git push that actually needs it explicitly, per-call, instead of relying on this.
+        persist-credentials: false
 
     - name: Write mapping config
       shell: bash
