@@ -77,9 +77,13 @@ def run_direction(
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
         break_note = "No break check configured for this direction."
 
-    original_message = diff.commit_message(near_repo, head_sha)
-    title = original_message.splitlines()[0] if original_message else f"{mapping.key} @ {head_sha[:12]}"
-    committed = publish.commit_to_branch(far_repo, branch, message=original_message)
+    # Deliberately not the production commit message. It's free-form human text that
+    # never goes through scrub/secretscan — see design.md's v7 note. The SHA alone is
+    # safe to expose (it's just a hash) and is enough to correlate back to the source
+    # commit for anyone who already has access to that repo.
+    title = f"[{label}] {mapping.key} @ {head_sha[:12]}"
+    commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
+    committed = publish.commit_to_branch(far_repo, branch, message=commit_message)
     if not committed:
         print(f"[{label}:{mapping.key}] nothing changed vs the far side — no PR")
         return "unchanged"
