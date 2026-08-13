@@ -144,7 +144,16 @@ def run_direction(
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
     if not result.success:
+        # Previously the only outcome that never reached notify.py at all -- a real
+        # push/PR-creation failure showed up only as a print, invisible to anyone not
+        # reading this run's own logs. Now routed through the same channel as every
+        # other halt/error, Slack included.
+        notify.comment_on_commit(
+            head_sha,
+            f"[{label}] {mapping.key}: publish failed -- {result.message}",
+        )
         return "publish-failed"
+    notify.pr_opened(label, mapping.key, result.message)
     return "opened"
 
 

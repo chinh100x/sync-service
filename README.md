@@ -22,7 +22,9 @@ src/sync_service/
 │                   Off by default (`llm_safety_review.enabled`); fails *closed* (halts) on
 │                   any error, unlike pr_writer.py -- this is a security gate, not cosmetic.
 ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
-└── notify.py       comment on the source commit when a run halts
+├── notify.py       comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on
+│                   every halt/error and PR opened -- see design-history.md's v13 note.
+└── slack.py        best-effort Slack Incoming Webhook post; never raises, off unless configured
 tests/              unit tests for diff/scrub/publish — no GitHub calls needed
 demo/run_demo.py    runs the whole flow (both directions) against two local git repos, no GitHub needed
 action.yml          composite GitHub Action wrapping the CLI, for real deployment
@@ -42,7 +44,7 @@ Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, n
 ```bash
 uv run pytest -v
 ```
-50 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs and which categories actually fired), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`), `test_breakcheck.py`/`test_cli.py` (token/commit-message scoping), `test_pr_writer.py` (deterministic fallback on every OpenAI failure mode, and proof that production commit messages/excluded files/scrubbed values/secret matches never reach the model), `test_safety_review.py` (every failure mode is a hard halt, never an implicit pass, and the exit code distinguishes "blocked by a real finding" from "couldn't even check").
+58 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs and which categories actually fired), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`), `test_breakcheck.py`/`test_cli.py` (token/commit-message scoping), `test_pr_writer.py` (deterministic fallback on every OpenAI failure mode, and proof that production commit messages/excluded files/scrubbed values/secret matches never reach the model), `test_safety_review.py` (every failure mode is a hard halt, never an implicit pass, and the exit code distinguishes "blocked by a real finding" from "couldn't even check"), `test_slack.py`/`test_notify.py` (every Slack failure mode returns `False` without raising, and a publish failure now actually reaches a notification, not just an exit code).
 
 ### 3. Run the end-to-end demo (the whole system, both directions)
 

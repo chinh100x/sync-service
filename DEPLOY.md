@@ -300,7 +300,36 @@ mapping being genuinely blocked by a real finding is a *different*, expected exi
 code (0, same bucket as a secret-scan hit) -- check the run's log/comment to tell
 the two apart, not just the exit code alone.
 
-## 9. Roll out in build order
+## 9. Optional: Slack notifications
+
+Off unless configured -- no mapping-config field, just whether `SLACK_WEBHOOK_URL`
+is set. If it is, every PR opened and every halt/error (`sync_service.notify`, see
+design-history.md/architecture.md's v13 note) also posts to Slack, alongside the
+existing GitHub commit comment. Best-effort: a missing or broken webhook never
+affects whether the sync itself succeeds.
+
+To enable it:
+
+1. Create a Slack [Incoming Webhook](https://api.slack.com/messaging/webhooks) for
+   whichever channel should receive these.
+2. Store the URL as a repo/org secret (a plain secret is fine here -- unlike
+   `OPENAI_API_KEY`, this isn't a write credential to anything, so it doesn't need
+   an Environment).
+3. Pass it through as an input:
+   ```yaml
+   - uses: chinh100x/sync-service@main
+     with:
+       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+       # ...the rest as in §4
+   ```
+
+This does **not** give the tool any awareness of a PR going stale or conflicting
+after it's opened -- sync-service's job still ends the moment a PR is created
+("Branch pushed, PR opened, human reviews" -- architecture.md §7's failure
+matrix). It only covers events the code already knows about: a PR opening, and
+the existing halt/error outcomes.
+
+## 10. Roll out in build order
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR

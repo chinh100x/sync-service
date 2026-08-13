@@ -20,8 +20,11 @@ from .config import BreakCheck
 # calling. OPENAI_API_KEY joined this list when pr_writer.py started needing it in
 # the same "Run sync" step's env (action.yml) -- without this, break_check (which
 # runs untrusted, far-side-authored install/run commands) could read or exfiltrate
-# it exactly like GH_TOKEN before this list existed.
-_STRIP_ENV_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"}
+# it exactly like GH_TOKEN before this list existed. SLACK_WEBHOOK_URL is lower
+# stakes (posting a fake message, not exfiltrating write access) but the same
+# category of thing -- a value this step's env carries that untrusted code has no
+# business reading.
+_STRIP_ENV_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "SLACK_WEBHOOK_URL"}
 
 
 @dataclass
