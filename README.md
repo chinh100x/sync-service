@@ -1,6 +1,6 @@
 # sync-service
 
-Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. Any divergence on the far side since the last sync is a hard stop for a human — full-repo tracking and reverse-sync are beyond OST-3's original v1 (downstream-only) scope; see design.md's "v2"–"v4" sections for what that means and why an earlier auto-merge attempt was reverted.
+Implementation of [design.md](../design.md) / [architecture.md](../architecture.md) ([OST-3](https://linear.app/100xteam/issue/OST-3)): a bidirectional production ↔ open source sync service. A commit to either repo's default branch scrubs (or restores) production-specific detail, confirms the far repo still installs and runs with the change applied, and opens a PR — nothing auto-merges. **There's no divergence detection** — a run always overwrites the far side's tracked files with the near side's current content; see design.md's v5 note for what that gives up (a real OST-5 acceptance criterion) and why it's a deliberate tradeoff for this use case, not a default recommendation. Full-repo tracking and reverse-sync are beyond OST-3's original v1 (downstream-only) scope; see design.md's "v2"–"v5" sections for the full history, including an auto-merge attempt that was tried and reverted.
 
 This directory is a standalone project. It doesn't inherit CI/build conventions from any other repo.
 
@@ -13,11 +13,10 @@ src/sync_service/
 ├── diff.py         which mappings did base..head touch (the trigger) — source-side or dest-side depending on direction
 ├── scrub.py        exclude list + regex substitution, direction-agnostic (redact fwd, hydrate rev)
 ├── secretscan.py   demo secret-scan gate — swap for `gitleaks` in production, see DEPLOY.md
-├── state.py        sync-state manifest — hash comparison, hard stop on any divergence
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
-├── publish.py      branch + commit + `gh pr create`
+├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
 └── notify.py       comment on the source commit when a run halts
-tests/              unit tests for diff/scrub/state — no GitHub calls needed
+tests/              unit tests for diff/scrub/publish — no GitHub calls needed
 demo/run_demo.py    runs the whole flow (both directions) against two local git repos, no GitHub needed
 action.yml          composite GitHub Action wrapping the CLI, for real deployment
 ```
@@ -36,7 +35,7 @@ Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, n
 ```bash
 uv run pytest -v
 ```
-13 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs), `test_state.py` (clean / new / conflict classification).
+11 tests, each exercising one decision from `design.md`/`architecture.md` with no git/GitHub involved: `test_diff.py` (trigger matching, including whole-repo mappings), `test_scrub.py` (exclude + redact + hydrate, plus the always-excluded mechanical dirs), `test_publish.py` (a real change commits; genuinely identical content backs out cleanly instead of crashing `git commit`).
 
 ### 3. Run the end-to-end demo (the whole system, both directions)
 
@@ -50,7 +49,7 @@ It builds two throwaway local git repos in `/tmp` (`prod-repo`, `oss-repo`) and 
 | ---- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | Commit touches both `src/portmon/` and `src/brk/` → two PRs opened (dry-run print) | trigger fires per-mapping; `internal_reporting.py` excluded; `cag-mcp.internal` URL redacted to `<MCP_ENDPOINT>`                                                                             |
 | 2    | A hardcoded API key sneaks into `covenant.py`                                      | secret-scan gate halts the run, no PR, comment printed                                                                                                                                       |
-| 3    | An outside OSS edit, then a separate prod change to the same mapping               | far side diverged → conflict halt, no forward PR — **but** a *separate* reverse-sync PR still proposes the outsider's edit back to prod, hydrated. No merge is attempted either way. |
+| 3    | An outside OSS edit, then a separate prod change to the same mapping               | **silently overwritten** — no divergence detection anymore, the next forward sync just replaces it. Deliberate tradeoff, not a bug — see design.md's v5 note. |
 | 4    | `src/brk/mod.py` gets a real bug                                                   | break check runs it, fails, **working tree is reverted** — `brk/mod.py` on OSS main still has the old working code                                                                           |
 | 4b   | The bug gets fixed and pushed again                                                | forward sync succeeds on retry — design.md §3's retry path                                                                                                                                   |
 | 5    | Commit only touches `README.md`                                                    | no mapping matched → no-op                                                                                                                                                                   |
@@ -78,17 +77,15 @@ git -C "$WS/oss-repo" log --oneline main
 git -C "$WS/oss-repo" branch -a
 git -C "$WS/prod-repo" branch -a
 
-# the manifest that makes conflict-detection possible — hash-only, no blobs
-cat "$WS/oss-repo/.sync-state/portmon.json"
-
-# the propagated, scrubbed file
+# the propagated, scrubbed file — this is now unconditionally the near side's
+# current content; there's no manifest left to compare it against
 cat "$WS/oss-repo/plugin/covenant.py"
 
 # proof the exclude worked — internal_reporting.py never made it across
 ls "$WS/oss-repo/plugin/"
 
-# the reverse-sync proposal that landed on the prod repo, with the real endpoint restored
-git -C "$WS/prod-repo" show "reverse-sync/portmon/<sha>:src/portmon/covenant.py"   # fill in <sha> from the demo's printed branch name
+# the explicit reverse-sync PR (step 7) that landed on the prod repo, with the real endpoint restored
+git -C "$WS/prod-repo" show "reverse-sync/brk/<sha>:src/brk/mod.py"   # fill in <sha> from the demo's printed branch name
 ```
 
 ### 5. Drive the CLI yourself, one command at a time (optional, deeper look)
@@ -116,4 +113,4 @@ uv run sync-service run \
 
 ## Deploying against real repos
 
-See [DEPLOY.md](./DEPLOY.md) — token setup, the actual GitHub Actions workflow YAML for both directions, the `gitleaks` swap, and the bootstrapping gotcha (pre-existing files with no manifest entry look like conflicts on a direction's very first run).
+See [DEPLOY.md](./DEPLOY.md) — token setup, the actual GitHub Actions workflow YAML for both directions, and the `gitleaks` swap. (No more bootstrapping step — that only existed for the manifest, which v5 removed.)

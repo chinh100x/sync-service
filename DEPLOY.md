@@ -9,11 +9,20 @@ wire OST-4, *then* OST-5. Don't skip straight to production repos.
 
 **This is bidirectional (v2), beyond OST-3/4/5's current written scope** — see
 design.md's "v2" section for what that means and why it's called out separately.
-(An earlier auto-merge feature that also lived under "v2" was tried and reverted
-in v4 — any divergence is a hard stop again, same as v1.) Everything below assumes
-you want both directions live; if you only want the original v1 (downstream-only)
-behavior, just skip §5 (the reverse workflow) and never enable `hydrate` in the
-mapping config — forward-only still works exactly as before.
+Everything below assumes you want both directions live; if you only want the
+original v1 (downstream-only) behavior, just skip §5 (the reverse workflow) and
+never enable `hydrate` in the mapping config — forward-only still works.
+
+**Read design.md's v5 note before deploying this against a real repo pair.**
+There is no divergence detection anymore (removed entirely, not simplified) — a
+sync always overwrites the far side's tracked files with the near side's current
+content. [OST-5](https://linear.app/100xteam/issue/OST-5)'s "outside contributions
+on main are not overwritten" acceptance criterion is **not met** by this version.
+That's fine for a repo pair only you (or a small team) push to; it's a real risk
+for OST-4/OST-5's actual repos, which are explicitly meant to take outside
+contributions. Don't deploy this version against a repo where that matters without
+consciously deciding to accept it, or reintroducing some form of divergence check
+first.
 
 ## 0. Prerequisites
 
@@ -97,43 +106,19 @@ Concretely, for OST-4 that's the monitoring mapping; for OST-5 it's
 three 100xtools production sources.
 
 **`source`/`dest` are optional — omit both to track the whole repo** instead
-of a subdirectory (see design.md's v3 section). `.git`, `.sync-state`, and the
-counterpart checkout `action.yml` makes are always excluded regardless, but
-anything else that shouldn't cross — a real `.env`, an internal-only folder —
-needs its own entry in `exclude`. There's no wildcard support there: list
-exact paths, not `*.env` or similar. If you're tracking the whole repo, also
-use `paths-ignore: [".sync-state/**"]` on the trigger (§4/§5) instead of an
-allowlist — a sync landing on the far side's own manifest shouldn't retrigger
-a workflow on that side.
+of a subdirectory (see design.md's v3 section). `.git` and the counterpart
+checkout `action.yml` makes are always excluded regardless, but anything else
+that shouldn't cross — a real `.env`, an internal-only folder — needs its own
+entry in `exclude`. There's no wildcard support there: list exact paths, not
+`*.env` or similar.
 
-**Important operational gotcha**: `state.classify` (architecture.md §5/v2)
-treats *any* file that already exists at a mapped path but isn't in the
-sync-state manifest as a conflict — "unknown provenance," not "safe to
-merge against." If the destination folder already has content before the
-first automated run *in that direction*, that first run will halt on every
-file in it. Two ways to bootstrap cleanly, per direction:
-
-- Start from an empty destination folder (what the demo does for its first
-  forward sync) and let the first automated run populate it, or
-- Do one manual initial sync yourself, commit it, then seed the manifest —
-  either hand-write `.sync-state/<mapping-key>.json` (`last_source_sha` +
-  `sha256:` hash of each file), or call the helper directly:
-  ```python
-  from pathlib import Path
-  from sync_service import state
-  state.write(Path("/path/to/checkout"), "portmon", "<sha-you-just-committed>", {
-      "plugin/covenant.py": Path("/path/to/checkout/plugin/covenant.py").read_text(),
-  })
-  ```
-  `state.write` handles the hash for you.
-
-**This applies separately to each direction.** Enabling reverse for a mapping
-that's only ever run forward means the *production* side has no manifest yet
-— the first reverse check will see production's existing files as
-unknown-provenance and halt, even though nothing is actually wrong. Bootstrap
-production's manifest the same way, once, before turning the reverse workflow
-on. See `demo/run_demo.py`'s "bootstrap" step for a worked example of exactly
-this.
+**No bootstrapping step needed anymore.** Earlier versions tracked a manifest
+per mapping and required seeding it before the first run in a new direction, or
+every pre-existing file at the mapped path would be treated as an unresolvable
+conflict. That tracking is gone as of v5 (see design.md's v5 note) — there's
+nothing to bootstrap, and the first run in either direction just works. The
+tradeoff is the one described at the top of this file: no protection against
+overwriting a change that landed on the far side outside this tool.
 
 ## 4. Add the forward workflow to the production repo
 
@@ -158,9 +143,6 @@ jobs:
       - uses: 100x/sync-service@v1
         with:
           config: |
-            destination:
-              repo: 100x-oss/portfolio-monitoring
-              branch: main
             mappings:
               - key: portmon
                 source: src/portmon
@@ -216,9 +198,6 @@ jobs:
       - uses: 100x/sync-service@v1
         with:
           config: |
-            destination:
-              repo: 100x-oss/portfolio-monitoring
-              branch: main
             mappings:
               - key: portmon
                 source: src/portmon
@@ -234,11 +213,10 @@ jobs:
           head: ${{ github.sha }}
 ```
 
-Without this workflow, an outside OSS edit still isn't lost — the forward
-workflow's own `state.classify` (architecture.md §5/v2) opportunistically
-proposes it back the next time *any* production commit triggers a forward
-run. This reverse workflow just reacts immediately instead of waiting for
-that next unrelated production push.
+Without this workflow, an outside OSS edit isn't proposed back at all — there's
+no opportunistic detection anymore (that depended on the manifest, removed in
+v5). The only way an OSS-side change reaches production is this workflow
+actually running; skipping it means that direction just doesn't happen.
 
 ## 6. Swap the demo secret scanner for gitleaks
 
@@ -255,20 +233,22 @@ tenant data in it.
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
    `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR
-   (secret scan hit), a far-side divergence (conflict halt, no forward PR —
-   but the reverse-sync proposal still fires), a break check failure with a
-   working-tree revert, and — if you're enabling §5 — an explicit
-   `--direction reverse` run.
+   (secret scan hit), an outside far-side edit getting silently overwritten
+   by the next sync (know this is expected — see design.md's v5 note, not a
+   bug to chase), a break check failure with a working-tree revert, and —
+   if you're enabling §5 — an explicit `--direction reverse` run.
 2. **OST-4**: wire `sync/monitoring.yaml` into the monitoring production
    repo, make one real commit, confirm the PR against the OST-6 demo deal
    looks right and the break check actually ran `portmon run --deal
    demo/ost6-deal-01` against the propagated code.
 3. **OST-5**: wire `sync/tools.yaml` (three mappings) into the three
-   100xtools production sources, confirm one PR per tool (never batched),
-   and confirm the manifest conflict path by merging an outside PR to the
-   OSS repo's `main` before triggering the next sync.
+   100xtools production sources, confirm one PR per tool (never batched).
+   **Before wiring this one for real**: OST-5's own acceptance criteria
+   require outside contributions on `main` not be overwritten — this version
+   doesn't do that (see design.md's v5 note) — decide explicitly whether
+   that's acceptable for this repo, or bring back divergence detection first.
 4. Only if OSS -> production is actually wanted (it's beyond OST-3/4/5's
    current scope, see design.md's v2 section): add `hydrate` rules to the
-   mapping config, bootstrap production's manifest (§3), wire §5's reverse
-   workflow, and confirm a real OSS contribution shows up as a real PR on
+   mapping config and wire §5's reverse workflow — no bootstrapping needed
+   anymore — and confirm a real OSS contribution shows up as a real PR on
    the production repo.
