@@ -21,9 +21,15 @@ def comment_on_commit(commit_sha: str, body: str) -> str:
     return message
 
 
-def pr_opened(label: str, mapping_key: str, detail: str) -> None:
+def pr_opened(label: str, mapping_key: str, title: str, detail: str) -> None:
     """Slack-only -- a successfully opened PR is already visible on GitHub itself
     (reviewers watching that repo see it there); this just saves someone from
     having to notice it. `detail` is whatever publish.open_pr produced: a real PR
-    URL, or the dry-run preview text if no remote is configured."""
-    slack.post(f"[{label}:{mapping_key}] PR opened: {detail}")
+    URL (rendered as a Slack link -- `<url|text>` is Slack's own mrkdwn syntax, not
+    `[text](url)`, which Slack does not render as a link at all), or the dry-run
+    preview text if no remote is configured (no real URL to link to, so `title`
+    alone is posted instead)."""
+    if detail.startswith("[dry-run"):
+        slack.post(f"[{label}:{mapping_key}] PR opened (dry-run): {title}")
+    else:
+        slack.post(f"[{label}:{mapping_key}] PR opened: <{detail}|{title}>")

@@ -157,7 +157,7 @@ def run_direction(
             f"[{label}] {mapping.key}: publish failed -- {result.message}",
         )
         return "publish-failed"
-    notify.pr_opened(label, mapping.key, result.message)
+    notify.pr_opened(label, mapping.key, title, result.message)
     return "opened"
 
 

@@ -21,13 +21,30 @@ def test_comment_on_commit_still_returns_normally_if_slack_post_fails(monkeypatc
     assert "body text" in result  # slack failing never raises or changes the return
 
 
-def test_pr_opened_posts_to_slack_only_no_github_comment_print(monkeypatch, capsys):
+def test_pr_opened_posts_a_slack_link_using_the_title_as_link_text(monkeypatch, capsys):
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
-    notify.pr_opened("sync", "portmon", "https://github.com/x/y/pull/1")
+    notify.pr_opened("sync", "portmon", "Improve covenant validation", "https://github.com/x/y/pull/1")
 
     assert len(captured) == 1
     assert "portmon" in captured[0]
-    assert "https://github.com/x/y/pull/1" in captured[0]
+    # Slack's own mrkdwn link syntax is <url|text> -- not "[text](url)", which
+    # Slack does not render as a link at all.
+    assert "<https://github.com/x/y/pull/1|Improve covenant validation>" in captured[0]
     assert capsys.readouterr().out == ""  # unlike comment_on_commit, nothing printed
+
+
+def test_pr_opened_dry_run_posts_the_title_with_no_fake_link(monkeypatch):
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    notify.pr_opened(
+        "sync", "portmon", "Sync portmon changes",
+        "[dry-run: no remote configured] Would open PR sync/portmon/abc123 -> main\nTitle: ...",
+    )
+
+    assert len(captured) == 1
+    assert "Sync portmon changes" in captured[0]
+    assert "dry-run" in captured[0]
+    assert "<" not in captured[0]  # no Slack link syntax around dry-run preview text
