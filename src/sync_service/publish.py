@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -29,8 +30,33 @@ def _git_id() -> list[str]:
 
 
 def branch_name(namespace: str, head_sha: str) -> str:
-    """namespace is the full branch prefix, e.g. `sync/portmon` or `reverse-sync/portmon`."""
-    return f"{namespace}/{head_sha[:12]}"
+    """namespace is the full branch prefix, e.g. `sync/portmon` or `reverse-sync/portmon`.
+    This is the *temporary* working name used while committing -- cli.py renames it to
+    a human-readable, title-derived name (see rename_branch) once the PR title is known,
+    before anything is pushed. It also doubles as the idempotency prefix: the (mapping,
+    head_sha) identity a re-run needs to recognize is fully captured here, regardless of
+    what slug gets appended later -- see branch_exists_with_prefix. 7 chars -- git's own
+    default abbreviation length -- rather than 12: shorter, still practically unique for
+    a repo this size."""
+    return f"{namespace}/{head_sha[:7]}"
+
+
+def slugify(text: str, max_length: int = 50) -> str:
+    """Git-ref-safe, human-readable fragment for a branch name -- lowercase,
+    non-alphanumeric runs collapsed to single hyphens, capped at max_length. Falls
+    back to "change" if nothing alphanumeric survives, so a branch name derived from
+    unusual title text (all punctuation, non-Latin script, etc.) is never left empty
+    or malformed."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug[:max_length].rstrip("-") or "change"
+
+
+def rename_branch(dest_repo: Path, new_name: str) -> None:
+    """Renames the current (local, not-yet-pushed) branch -- swaps commit_to_branch's
+    temporary sha-only working name for the final, title-derived name once the PR
+    title is known. Ordinary git, same as reword_commit's amend: nothing here has
+    been pushed yet, so this isn't a rewrite of shared history."""
+    subprocess.run(["git", *_git_id(), "branch", "-m", new_name], cwd=dest_repo, check=True, capture_output=True)
 
 
 def checkout_base(dest_repo: Path, base_branch: str) -> None:
@@ -63,6 +89,31 @@ def branch_exists(dest_repo: Path, branch: str) -> bool:
         text=True,
     )
     return remote.returncode == 0
+
+
+def branch_exists_with_prefix(dest_repo: Path, prefix: str) -> bool:
+    """Like branch_exists, but a glob-prefix match instead of an exact name -- needed
+    once branch names carry a title-derived slug that isn't known until after the
+    commit (and its generated title) already exist. `prefix` alone (e.g.
+    "sync/portmon/e184f69") is the full (mapping, head_sha) idempotency key; whatever
+    slug text a prior run appended after it is irrelevant to "has this already been
+    proposed."""
+    local = subprocess.run(
+        ["git", "branch", "--list", f"{prefix}*"],
+        cwd=dest_repo,
+        capture_output=True,
+        text=True,
+    )
+    if local.stdout.strip():
+        return True
+
+    remote = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", f"{prefix}*"],
+        cwd=dest_repo,
+        capture_output=True,
+        text=True,
+    )
+    return bool(remote.stdout.strip())
 
 
 def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:

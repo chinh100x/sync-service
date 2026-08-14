@@ -246,8 +246,11 @@ def test_enabled_and_blocked_halts_with_exit_0_not_a_tool_failure(tmp_path, monk
                            "--base", base, "--head", head])
 
     assert exit_code == 0  # correct policy enforcement, not a tool failure
-    branch = f"sync/portmon/{head[:12]}"
-    assert not _git(oss, "branch", "--list", branch).stdout.strip()  # no branch/commit happened
+    # Blocked before commit_to_branch ever runs, so no branch was created under this
+    # sha prefix at all -- glob, since a real branch (if any existed) would carry a
+    # title-derived slug suffix we don't know here.
+    branch_prefix = f"sync/portmon/{head[:7]}"
+    assert not _git(oss, "branch", "--list", f"{branch_prefix}*").stdout.strip()
 
 
 def test_enabled_but_unavailable_is_a_real_failure_exit_1(tmp_path, monkeypatch):

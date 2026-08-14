@@ -52,6 +52,17 @@ def commit(repo: Path, message: str) -> str:
     return rev(repo)
 
 
+def find_branch(repo: Path, prefix: str) -> str:
+    """The final branch name carries a title-derived slug appended after the sha
+    prefix (see publish.rename_branch) -- not knowable in advance from here, so look
+    it up by prefix instead of assuming the old sha-only name."""
+    listed = git(repo, "branch", "--list", f"{prefix}*").stdout.strip().splitlines()
+    names = [line.strip().lstrip("* ") for line in listed]
+    if not names:
+        raise RuntimeError(f"no branch found matching {prefix}*")
+    return names[0]
+
+
 def header(title: str) -> None:
     print("\n" + "=" * 70)
     print(title)
@@ -148,7 +159,8 @@ def main() -> None:
     # simulate a human approving + merging both sync PRs into oss main
     git(oss, "checkout", "main")
     for key in ("portmon", "brk"):
-        git(oss, "merge", "--no-ff", f"sync/{key}/{sha1[:12]}", "-m", f"merge sync PR: {key}")
+        branch = find_branch(oss, f"sync/{key}/{sha1[:7]}")
+        git(oss, "merge", "--no-ff", branch, "-m", f"merge sync PR: {key}")
     print("(demo) merged both sync PRs into oss main, as if a human approved them")
 
     # ---- sha2: secret sneaks into covenant.py -> secret-halt ----
@@ -202,7 +214,8 @@ def main() -> None:
     run(sha2, sha3, "STEP 3 — no state tracking anymore: this silently overwrites the outsider's edit")
 
     print("\n-- what actually landed on the sync/portmon branch --")
-    merged_text = git(oss, "show", f"sync/portmon/{sha3[:12]}:plugin/covenant.py").stdout
+    portmon_branch = find_branch(oss, f"sync/portmon/{sha3[:7]}")
+    merged_text = git(oss, "show", f"{portmon_branch}:plugin/covenant.py").stdout
     print("has the outsider's comment (it doesn't — overwritten):", "polled every 5 minutes" in merged_text)
     print("has prod's audit():", "def audit():" in merged_text)
     print("(demo) this is the deliberate tradeoff of removing .sync-state: no divergence "
@@ -245,7 +258,7 @@ def main() -> None:
     run(oss_base, oss_head, "STEP 7 — OSS push triggers --direction reverse directly -> PR onto the production repo", direction="reverse")
 
     print("\n-- what the explicit reverse run proposed on the prod repo --")
-    reverse_brk_branch = f"reverse-sync/brk/{oss_head[:12]}"
+    reverse_brk_branch = find_branch(prod, f"reverse-sync/brk/{oss_head[:7]}")
     proposed_brk = git(prod, "show", f"{reverse_brk_branch}:src/brk/mod.py").stdout
     print(f"branch: {reverse_brk_branch}")
     print("hydrated (real endpoint, not the placeholder):",

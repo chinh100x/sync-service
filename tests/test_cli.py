@@ -72,7 +72,9 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
     assert SENSITIVE_TEXT not in printed
     assert "RockyMountain" not in printed
 
-    branch = f"sync/portmon/{head[:12]}"
+    # DeterministicPRWriter's title ("Sync portmon changes", no LLM configured here)
+    # slugifies to this suffix -- see publish.slugify and cli.py's rename_branch call.
+    branch = f"sync/portmon/{head[:7]}-sync-portmon-changes"
     far_side_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
     assert SENSITIVE_TEXT not in far_side_message
     assert "RockyMountain" not in far_side_message
@@ -116,7 +118,7 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
         ]
     )
 
-    branch = f"sync/portmon/{head[:12]}"
+    branch = f"sync/portmon/{head[:7]}-sync-portmon-changes"
     subject = _git(oss, "log", "-1", "--pretty=%s", branch).stdout.strip()
     full_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
 

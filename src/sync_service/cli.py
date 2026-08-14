@@ -53,8 +53,12 @@ def run_direction(
     # instead of both branching independently off base_branch. See design-history.md's v8 note.
     publish.checkout_base(far_repo, base_branch)
 
+    # The final branch name gets a human-readable slug appended once the PR title is
+    # known (see the rename_branch call below) -- but that title doesn't exist yet at
+    # this point in the pipeline, so idempotency has to key off this sha-only prefix
+    # alone rather than an exact name. See publish.branch_exists_with_prefix.
     branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
-    if publish.branch_exists(far_repo, branch):
+    if publish.branch_exists_with_prefix(far_repo, branch):
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
         return "skipped-exists"
 
@@ -149,6 +153,14 @@ def run_direction(
     # above to the same title just generated for the PR -- same safe, far-side-only
     # source, not a reopening of v7's leak. See design-history.md's v14 note.
     publish.reword_commit(far_repo, message=f"{title}\n\n{commit_message}")
+    # Swap the temporary sha-only working name for a human-readable one derived from
+    # the same title, reusing it rather than a separate LLM call -- the sha prefix
+    # stays as a suffix so two different commits with similarly-worded titles can
+    # never collide, and so branch_exists_with_prefix's earlier idempotency check
+    # still matches this branch on a later re-run. Still local, still unpushed.
+    # See design-history.md's v18 note.
+    branch = f"{branch}-{publish.slugify(title)}"
+    publish.rename_branch(far_repo, branch)
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
     if not result.success:

@@ -106,6 +106,65 @@ def test_reword_commit_changes_message_without_touching_the_tree(tmp_path):
     assert tree_after == tree_before  # amending the message never touches the actual content
 
 
+def test_slugify_produces_a_safe_readable_branch_segment():
+    assert publish.slugify("Sync portmon changes") == "sync-portmon-changes"
+    assert publish.slugify("Fix: bug #42 (urgent!!)") == "fix-bug-42-urgent"
+
+
+def test_slugify_falls_back_when_nothing_alphanumeric_survives():
+    assert publish.slugify("!!!") == "change"
+    assert publish.slugify("") == "change"
+
+
+def test_slugify_caps_length_without_trailing_hyphen():
+    slug = publish.slugify("a " * 40, max_length=10)
+    assert len(slug) <= 10
+    assert not slug.endswith("-")
+
+
+def test_rename_branch_swaps_the_current_branch_name(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("changed\n")
+    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
+
+    publish.rename_branch(repo, "sync/x/abc123-fix-the-thing")
+
+    assert publish.branch_exists(repo, "sync/x/abc123-fix-the-thing")
+    assert not publish.branch_exists(repo, "sync/x/abc123")
+
+
+def test_branch_exists_with_prefix_matches_regardless_of_slug_suffix(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("changed\n")
+    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
+    publish.rename_branch(repo, "sync/x/abc123-fix-the-thing")
+
+    # An earlier run's idempotency check only knows the sha prefix -- the slug
+    # (derived from a title generated after that check runs) isn't known yet.
+    assert publish.branch_exists_with_prefix(repo, "sync/x/abc123")
+    assert not publish.branch_exists_with_prefix(repo, "sync/x/def456")
+
+
+def test_branch_exists_with_prefix_checks_the_remote_too(tmp_path):
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+
+    pusher = tmp_path / "pusher"
+    _init_repo(pusher)
+    _git(pusher, "remote", "add", "origin", str(bare))
+    _git(pusher, "push", "-q", "-u", "origin", "main")
+    _git(pusher, "checkout", "-b", "sync/x/aaaaaaa-fix-the-thing")
+    _git(pusher, "push", "-q", "-u", "origin", "sync/x/aaaaaaa-fix-the-thing")
+
+    fresh = tmp_path / "fresh"
+    subprocess.run(["git", "clone", "-q", str(bare), str(fresh)], check=True)
+
+    assert publish.branch_exists_with_prefix(fresh, "sync/x/aaaaaaa") is True
+    assert publish.branch_exists_with_prefix(fresh, "sync/x/does-not-exist") is False
+
+
 def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):
     # A remote being configured means a real publish was intended -- if `gh` isn't
     # available to do it, that must surface as a failure, never a silent dry-run
