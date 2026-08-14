@@ -13,33 +13,24 @@ from pathlib import Path
 
 
 def _basic_auth_header(token: str) -> str:
-    """A one-off `-c http.extraheader=...` value for a single git invocation — never
-    written to any .git/config, unlike actions/checkout's persisted-credential mode."""
+    """One-off `-c http.extraheader=...` for a single git invocation -- never
+    written to .git/config, unlike a persisted checkout credential."""
     encoded = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return f"AUTHORIZATION: basic {encoded}"
 
-# Identity for the sync commits themselves — a CI runner has no git identity configured
-# by default. Read lazily (a function, not a frozen module-level constant) so cli.py
-# can derive a project-specific default from SyncConfig.project_name and set it via
-# os.environ *after* this module is already imported -- a constant evaluated once at
-# import time would miss that. An explicit SYNC_SERVICE_COMMIT_NAME/_EMAIL always wins
-# over any project_name-derived default (see cli.py's main()).
+
 def _git_id() -> list[str]:
+    """Commit identity, read lazily (not a module constant) so cli.py can set a
+    project-specific default via os.environ after this module is imported."""
     name = os.environ.get("SYNC_SERVICE_COMMIT_NAME", "sync-service[bot]")
     email = os.environ.get("SYNC_SERVICE_COMMIT_EMAIL", "sync-service@users.noreply.github.com")
     return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 
 def branch_name(namespace: str, head_sha: str) -> str:
-    """namespace is the full branch prefix, e.g. `sync/portmon` or `reverse-sync/portmon`.
-    This is only a *temporary* working name used while committing, needed because
-    diff.candidate_diff() (used to build the PR title) requires a real commit on a
-    real branch to diff against, before that title exists. cli.py renames it to a
-    clean, human-readable, title-derived name (see rename_branch) once the title is
-    known, before anything is pushed -- this sha-only name is never itself pushed or
-    visible anywhere. Idempotency doesn't depend on this name at all -- see
-    already_synced/record_synced below, which track (mapping, head_sha) via a
-    dedicated ref instead, so the final branch name is free to carry no sha at all."""
+    """Temporary working branch, committed onto before the PR title (and therefore
+    the final branch name) exists. Renamed by rename_branch once it does; never
+    itself pushed. Idempotency doesn't depend on this name -- see already_synced."""
     return f"{namespace}/{head_sha[:7]}"
 
 
@@ -48,10 +39,9 @@ def _sync_ref(mapping_key: str, head_sha: str) -> str:
 
 
 def already_synced(dest_repo: Path, mapping_key: str, head_sha: str) -> bool:
-    """Whether this (mapping, head_sha) has already been proposed. Checked via a
-    dedicated, non-branch ref recorded by record_synced on a prior successful run --
-    not the PR branch's own name, which is a plain, readable slug with no sha in it
-    and so can't double as the idempotency key the way a sha-prefixed name would."""
+    """Whether (mapping, head_sha) was already proposed, via a dedicated ref
+    recorded by record_synced -- not the branch name, which is a plain slug that
+    can't double as an idempotency key."""
     ref = _sync_ref(mapping_key, head_sha)
     local = subprocess.run(["git", "show-ref", "--verify", "--quiet", ref], cwd=dest_repo)
     if local.returncode == 0:
@@ -62,14 +52,9 @@ def already_synced(dest_repo: Path, mapping_key: str, head_sha: str) -> bool:
 
 
 def record_synced(dest_repo: Path, mapping_key: str, head_sha: str, token: str | None = None) -> None:
-    """Marks (mapping, head_sha) as synced, for already_synced to find on a later
-    run -- call only after a real PR (or dry-run) actually succeeded, never on a
-    halt/failure, so a genuinely failed run still gets retried rather than silently
-    skipped forever. Best-effort on the remote push (mirrors the branch push in
-    open_pr): a real remote is required for this to mean anything past the current
-    checkout, but a failure here shouldn't fail the overall run -- worst case, a
-    future re-run just doesn't recognize this one and opens a redundant PR, not a
-    silent incorrect skip."""
+    """Marks (mapping, head_sha) synced. Call only after a real success, never on a
+    halt/failure, so a failed run still gets retried. Remote push is best-effort --
+    a failure here just risks a redundant PR later, never an incorrect skip."""
     ref = _sync_ref(mapping_key, head_sha)
     subprocess.run(["git", "update-ref", ref, "HEAD"], cwd=dest_repo, check=True, capture_output=True)
 
@@ -85,37 +70,28 @@ def record_synced(dest_repo: Path, mapping_key: str, head_sha: str, token: str |
 
 
 def slugify(text: str, max_length: int = 50) -> str:
-    """Git-ref-safe, human-readable fragment for a branch name -- lowercase,
-    non-alphanumeric runs collapsed to single hyphens, capped at max_length. Falls
-    back to "change" if nothing alphanumeric survives, so a branch name derived from
-    unusual title text (all punctuation, non-Latin script, etc.) is never left empty
-    or malformed."""
+    """Git-ref-safe branch fragment. Falls back to "change" if nothing
+    alphanumeric survives, so an unusual title never yields an empty name."""
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug[:max_length].rstrip("-") or "change"
 
 
 def rename_branch(dest_repo: Path, new_name: str) -> None:
-    """Renames the current (local, not-yet-pushed) branch -- swaps commit_to_branch's
-    temporary sha-only working name for the final, title-derived name once the PR
-    title is known. Ordinary git, same as reword_commit's amend: nothing here has
-    been pushed yet, so this isn't a rewrite of shared history."""
+    """Renames the current, not-yet-pushed branch -- ordinary git, not a rewrite
+    of shared history."""
     subprocess.run(["git", *_git_id(), "branch", "-m", new_name], cwd=dest_repo, check=True, capture_output=True)
 
 
 def checkout_base(dest_repo: Path, base_branch: str) -> None:
-    """Reset dest_repo to base_branch before processing a mapping. Required when a
-    single run handles multiple mappings against the same far_repo checkout — without
-    this, the second mapping's commit_to_branch() would branch off whatever the first
-    mapping's branch left HEAD on, nesting one mapping's commit inside the other's PR
-    instead of both branching independently off base_branch."""
+    """Reset dest_repo to base_branch before processing a mapping -- otherwise a
+    second mapping in the same run branches off the first mapping's commit
+    instead of base_branch."""
     subprocess.run(["git", *_git_id(), "checkout", base_branch], cwd=dest_repo, check=True, capture_output=True)
 
 
 def branch_exists(dest_repo: Path, branch: str) -> bool:
-    """Checks both local and remote — a fresh Action runner's checkout has no local
-    knowledge of a branch a previous run pushed, only main's own history. Without the
-    remote check, idempotency silently stops working the moment this runs on CI instead
-    of a long-lived local clone."""
+    """Checks local and remote -- a fresh CI checkout only knows main's history,
+    not a branch a previous run pushed."""
     local = subprocess.run(
         ["git", "rev-parse", "--verify", branch],
         cwd=dest_repo,
@@ -135,17 +111,13 @@ def branch_exists(dest_repo: Path, branch: str) -> bool:
 
 
 def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | None = None) -> bool:
-    """Assumes dest_repo's working tree already has base_branch checked out with the
-    scrubbed changes pending (uncommitted). Moves them onto a new branch.
+    """Commits dest_repo's pending working-tree changes onto a new branch.
 
-    `author` (a "<name> <email>" string), when given, credits the actual near-side
-    committer via git's Author field, distinct from the Committer field (still
-    `_git_id()`, the bot identity) -- git itself already keeps these separate, this
-    just uses that instead of collapsing both onto the bot.
+    `author` credits the real near-side committer via git's Author field, kept
+    distinct from the Committer field (`_git_id()`, the bot identity).
 
-    Returns False (no branch left behind) if there was nothing to commit — the
-    propagated content was already byte-identical to what's on the far side. With
-    no manifest forcing a write every run, this is a real case, not just theoretical."""
+    Returns False (no branch left behind) if there was nothing to commit --
+    happens when propagated content is already byte-identical to the far side."""
     subprocess.run(["git", *_git_id(), "checkout", "-b", branch], cwd=dest_repo, check=True, capture_output=True)
     subprocess.run(["git", *_git_id(), "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
 
@@ -163,14 +135,10 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
 
 
 def reword_commit(dest_repo: Path, message: str) -> None:
-    """Rewrites the message of the commit `commit_to_branch` just made, before it's
-    ever pushed -- amending a not-yet-pushed local commit is ordinary git, not a
-    rewrite of shared history. Used to swap the mechanical placeholder message for
-    pr_writer.py's already-generated title. Safe to do because that title is built
-    only from far-side, already-scrubbed context (the same `PRContext` the PR body
-    itself uses) -- never from the raw production commit message, which must never
-    reach the far side verbatim (it's free-form human text that never goes through
-    scrub/secretscan)."""
+    """Rewrites commit_to_branch's placeholder message before it's ever pushed --
+    an amend of a not-yet-pushed local commit, not a rewrite of shared history.
+    Safe to swap in pr_writer's title: it's built only from already-scrubbed
+    far-side context, never the raw (untrusted) production commit message."""
     subprocess.run(["git", *_git_id(), "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
 
 
@@ -186,21 +154,15 @@ class PublishResult:
 
 
 def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> PublishResult:
-    """Uses `gh pr create` if a remote is configured, otherwise returns the PR body as
-    a dry-run description (this is the demo's path) -- dry-run counts as success, since
-    nothing was supposed to happen for real.
+    """Opens a PR via `gh` if a remote is configured; otherwise prints the PR body
+    as a dry-run description (this demo's path) -- dry-run counts as success.
 
-    `git push` authenticates via an explicit, single-invocation `-c http.extraheader`
-    built from `token` when one's given — never via a persisted checkout credential
-    (action.yml sets `persist-credentials: false` for exactly this reason: a persisted
-    credential sits in plaintext in .git/config, readable by anything with this
-    checkout's cwd, including break_check's install/run commands). Only `gh pr create`
-    additionally needs `GH_TOKEN` as an env var, scoped to just that one subprocess call.
+    Pushes via a one-off `-c http.extraheader` built from `token`, never a
+    persisted credential (which break_check's install/run commands could read).
 
-    "No remote configured" and "remote configured but `gh` is missing" are deliberately
-    different outcomes: the former is a legitimate local/demo scenario (dry-run,
-    success); the latter means a real publish was intended and the environment can't do
-    it — that must be a failure, not a silent dry-run reported as success."""
+    "No remote" (dry-run success) and "remote but no `gh`" (failure) are
+    deliberately different outcomes -- the latter means a real publish was
+    intended and the environment can't do it."""
     has_remote = subprocess.run(
         ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
     ).stdout.strip() != ""

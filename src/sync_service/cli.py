@@ -6,10 +6,9 @@ Both directions run through the same engine (`run_direction`) with source/dest a
 redact/hydrate swapped — the mechanism is identical either way.
 
 No manifest, no divergence detection: a run always overwrites the far side's tracked
-files with the near side's current content (after the secret scan and break check both
-pass). If the far side has its own edits outside this tool, they're overwritten with no
-warning — deliberately simpler than tracking state, at the cost of a "don't overwrite
-an outside contribution" guarantee that a manifest-based approach would give.
+files with the near side's current content. If the far side has its own edits outside
+this tool, they're overwritten with no warning — deliberately simpler than tracking
+state, at the cost of ever detecting an outside edit before clobbering it.
 """
 from __future__ import annotations
 
@@ -42,28 +41,20 @@ def run_direction(
     project_name: str | None,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
-    # Human-readable prefix for every Slack-bound notification below (secret/break-
-    # check/safety-review halts, publish failures, PR-opened) -- falls back to the
-    # old mechanical `label:mapping_key` format when the config doesn't set
-    # project_name, so existing demo/test configs see no behavior change.
+    # Falls back to the mechanical `label:mapping_key` prefix when project_name isn't set.
     project_label = project_name or f"{label}:{mapping.key}"
-    # Reset far_repo to base_branch before touching it. Without this, a prior mapping
-    # processed in the same run (or a prior breakcheck-halt) can leave far_repo checked
-    # out on *its own* branch — nesting this mapping's commit inside that one's PR
-    # instead of both branching independently off base_branch.
+    # Otherwise a prior mapping/halt in the same run can leave far_repo checked out
+    # on its own branch, nesting this mapping's commit inside that one's PR.
     publish.checkout_base(far_repo, base_branch)
 
-    # Tracked via a dedicated ref, not the branch name -- the final branch name is a
-    # clean, title-derived slug with no sha in it (see the rename_branch call below),
-    # so it can't double as the (mapping, head_sha) idempotency key the way a
-    # sha-prefixed name would.
+    # Tracked via a dedicated ref, not the branch name -- the final name is a clean,
+    # title-derived slug with no sha in it, so it can't double as the idempotency key.
     if publish.already_synced(far_repo, mapping.key, head_sha):
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
         return "skipped-exists"
 
-    # Purely a temporary working name -- diff.candidate_diff() below needs a real
-    # commit on a real branch before the title (and therefore the final branch name)
-    # can be generated. Renamed before anything is pushed; never itself visible.
+    # Temporary working name -- candidate_diff() below needs a real commit on a real
+    # branch before the title (and final branch name) can be generated.
     branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
 
     desired, scrubbed_categories = scrub.apply(near_repo, near_path, far_path, near_exclude, near_rules)
@@ -80,11 +71,7 @@ def run_direction(
         )
         return "secret-halt"
 
-    # Same input, same point in the pipeline as secretscan.scan() above -- neither
-    # touches far_repo's working tree at all until both pass. Unlike pr_writer below,
-    # this fails *closed*: SafetyReviewUnavailable means "couldn't confirm this is
-    # safe," which is a hard halt, not an implicit pass. See safety_review.py's
-    # module docstring.
+    # Fails *closed*: SafetyReviewUnavailable is a hard halt, never an implicit pass.
     try:
         verdict = safety_review.review(
             safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
@@ -124,27 +111,20 @@ def run_direction(
     else:
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
 
-    # Deliberately not the production commit message. It's free-form human text that
-    # never goes through scrub/secretscan, so it must never reach the far side
-    # verbatim. Only a transient placeholder: reword_commit below replaces it with
-    # the generated title before anything is pushed, so this text is never actually
-    # visible anywhere.
+    # Never the raw production commit message -- free-form human text that never
+    # goes through scrub/secretscan. Just a placeholder: reword_commit below
+    # replaces it with the generated title before anything is pushed.
     commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
-    # Credits the actual near-side committer as this commit's Author -- the
-    # Committer field (_git_id(), the bot identity) stays separate, so the pipeline's
-    # involvement is still visible even though the byline now names a real person.
+    # Credits the real near-side committer as Author, distinct from the bot Committer.
     author = diff.commit_author(near_repo, head_sha)
     committed = publish.commit_to_branch(far_repo, branch, message=commit_message, author=author)
     if not committed:
         print(f"[{label}:{mapping.key}] nothing changed vs the far side — no PR")
         return "unchanged"
 
-    # The PR title/body are the one place this tool tries to be human-readable rather
-    # than purely mechanical. Everything fed into it is already-scrubbed,
-    # already-validated far-side content (this mapping's own
-    # candidate diff, changed-file list, break-check outcome); it never touches
-    # near_repo/production directly, and it can fail over to a fully deterministic
-    # title/body with no effect on whether the sync itself succeeds.
+    # The one place this tool tries to be human-readable rather than purely
+    # mechanical. Built only from already-scrubbed, already-validated far-side
+    # content; falls back to a deterministic title/body on any failure.
     context = pr_writer.PRContext(
         mapping_key=mapping.key,
         public_reason=mapping.public_reason,
@@ -152,27 +132,17 @@ def run_direction(
         sanitized_diff=diff.candidate_diff(far_repo, base_branch, branch),
         scrubbed_categories=scrubbed_categories,
         validation=pr_writer.ValidationSummary(
-            # None (nothing to report) when no break_check is configured for this
-            # direction -- reaching this line already means it passed if one was.
             run_command=far_break_check.run if far_break_check is not None else None,
         ),
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
-    # Reword the commit (still local, not yet pushed) from the mechanical placeholder
-    # above to the same title just generated for the PR -- same safe, far-side-only
-    # source used to build the PR body, never the raw production commit message.
-    # No mechanical "sync: <key> @ <sha>" trailer is appended: it would just be
-    # pipeline residue in the commit history, and the sha it would carry is
-    # recoverable from record_synced's tracking ref (see below) if ever needed.
+    # Swap the placeholder for the generated title -- same safe, far-side-only
+    # source as the PR body. No mechanical trailer: the sha it would carry is
+    # already recoverable from record_synced's tracking ref.
     publish.reword_commit(far_repo, message=title)
-    # Swap the temporary sha-only working name for a clean, human-readable one
-    # derived from the same title, reusing it rather than a separate LLM call.
-    # Idempotency doesn't depend on this name (see already_synced above), so it
-    # carries no sha at all -- except in the rare case another branch already has
-    # this exact slug (a real name collision, not a re-run of the same commit,
-    # which already_synced would have caught above), where a short sha suffix
-    # disambiguates rather than failing the push outright. Still local, still
-    # unpushed.
+    # Clean, title-derived name -- idempotency doesn't depend on it (see
+    # already_synced above), so it carries no sha except when disambiguating an
+    # actual name collision (not a re-run, which already_synced already caught).
     branch = publish.slugify(title)
     if publish.branch_exists(far_repo, branch):
         branch = f"{branch}-{head_sha[:7]}"
@@ -180,17 +150,13 @@ def run_direction(
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
     if not result.success:
-        # Previously the only outcome that never reached notify.py at all -- a real
-        # push/PR-creation failure showed up only as a print, invisible to anyone not
-        # reading this run's own logs. Now routed through the same channel as every
-        # other halt/error, Slack included.
         notify.comment_on_commit(
             head_sha,
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
         )
         return "publish-failed"
-    # Only mark (mapping, head_sha) as synced once the publish actually succeeded --
-    # a halt/failure must still be retried on the next run, not silently skipped.
+    # Only mark synced once publish actually succeeded -- a halt/failure must
+    # still be retried on the next run, not silently skipped.
     publish.record_synced(far_repo, mapping.key, head_sha, token=gh_token)
     notify.pr_opened(project_label, title, result.message)
     return "opened"
@@ -217,9 +183,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    # Captured and removed from the ambient environment before anything else runs --
-    # in particular before breakcheck.run() executes any far-side install/run command.
-    # Only publish.open_pr()'s one gh pr create call gets it back, explicitly.
+    # Removed from the environment before breakcheck.run() executes any far-side
+    # command; only open_pr()'s one gh pr create call gets it back, explicitly.
     gh_token = os.environ.pop("GH_TOKEN", None)
 
     if args.command == "run":
@@ -228,24 +193,27 @@ def main(argv: list[str] | None = None) -> int:
         dest_repo = Path(args.dest_repo)
         by_mapping = {m.key: m for m in config.mappings}
 
-        # A project_name gives the commit author identity a meaningful name too, not
-        # just Slack messages -- setdefault so an explicit SYNC_SERVICE_COMMIT_NAME/
-        # _EMAIL (set directly in the workflow) always wins over this derived default.
-        # publish.py reads these lazily, so setting them here (after config is loaded,
-        # before any commit happens) takes effect even though publish was already
-        # imported.
+        # setdefault so an explicit SYNC_SERVICE_COMMIT_NAME/_EMAIL always wins.
+        # publish.py reads these lazily, so setting them here (after config load,
+        # before any commit) takes effect despite publish already being imported.
         if config.project_name:
             slug = config.project_name.lower().replace(" ", "-")
             os.environ.setdefault("SYNC_SERVICE_COMMIT_NAME", f"{config.project_name} Sync Bot")
             os.environ.setdefault("SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com")
 
+        # Attributes swapped between directions; everything else in run_direction
+        # is identical either way.
         if args.direction == "forward":
-            near_repo, path_attr = source_repo, "source"
+            near_repo, far_repo = source_repo, dest_repo
+            near_attr, far_attr, rules_attr, break_attr = "source", "dest", "redact", "break_check"
+            branch_prefix = label = "sync"
         else:
-            near_repo, path_attr = dest_repo, "dest"
+            near_repo, far_repo = dest_repo, source_repo
+            near_attr, far_attr, rules_attr, break_attr = "dest", "source", "hydrate", "reverse_break_check"
+            branch_prefix = label = "reverse-sync"
 
         files = diff.changed_files(near_repo, args.base, args.head)
-        hits = diff.match(files, config.mappings, path_attr=path_attr)
+        hits = diff.match(files, config.mappings, path_attr=near_attr)
 
         if not hits:
             print("no mapping touched — no-op")
@@ -254,35 +222,24 @@ def main(argv: list[str] | None = None) -> int:
         outcomes = []
         for key in hits:
             m = by_mapping[key]
-            if args.direction == "forward":
-                outcome = run_direction(
+            outcomes.append(
+                run_direction(
                     mapping=m,
-                    near_repo=source_repo, near_path=m.source, near_exclude=m.exclude, near_rules=m.redact,
-                    far_repo=dest_repo, far_path=m.dest, far_break_check=m.break_check,
+                    near_repo=near_repo, near_path=getattr(m, near_attr), near_exclude=m.exclude,
+                    near_rules=getattr(m, rules_attr),
+                    far_repo=far_repo, far_path=getattr(m, far_attr), far_break_check=getattr(m, break_attr),
                     head_sha=args.head, base_branch=args.base_branch,
-                    branch_prefix="sync", label="sync", gh_token=gh_token,
+                    branch_prefix=branch_prefix, label=label, gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,
                     project_name=config.project_name,
                 )
-            else:
-                outcome = run_direction(
-                    mapping=m,
-                    near_repo=dest_repo, near_path=m.dest, near_exclude=m.exclude, near_rules=m.hydrate,
-                    far_repo=source_repo, far_path=m.source, far_break_check=m.reverse_break_check,
-                    head_sha=args.head, base_branch=args.base_branch,
-                    branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
-                    llm_pr_enabled=config.llm_pr.enabled,
-                    llm_safety_review_enabled=config.llm_safety_review.enabled,
-                    project_name=config.project_name,
-                )
-            outcomes.append(outcome)
+            )
 
-        # A halt the tool performed correctly (secret/breakcheck/safety-review-halt)
-        # is still exit 0 -- that's policy working as intended. A publish failure or
-        # a safety review that couldn't even run (misconfigured key, API error,
-        # content too large) is a real problem with this run, distinct from a
-        # correctly-enforced halt, and must not be silently reported as success.
+        # A halt the tool performed correctly is still exit 0 -- that's policy
+        # working as intended. A publish failure or a safety review that
+        # couldn't even run is a real problem with this run and must not be
+        # silently reported as success.
         if "publish-failed" in outcomes or "safety-review-error" in outcomes:
             return 1
         return 0

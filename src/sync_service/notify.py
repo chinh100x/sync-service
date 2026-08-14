@@ -1,13 +1,7 @@
-"""Notify: every halt/error from run_direction is routed here. Prints a comment on the
-source commit, via the production repo's own read-only GITHUB_TOKEN (no extra
-permission needed), and -- if SLACK_WEBHOOK_URL is configured -- the same message
-posted to Slack too (see slack.py). Neither is required: Slack posting is
-best-effort and never raises, and the GitHub comment stays print-only in this demo.
-
-Slack is a second channel, not a replacement: it doesn't get its own toggle in the
-mapping config, since it carries no authority over the sync at all (unlike
-llm_pr/llm_safety_review) -- whether it fires is controlled entirely by whether
-SLACK_WEBHOOK_URL is set, the same pattern OPENAI_API_KEY already uses elsewhere.
+"""Notify: every halt/error from run_direction is routed here -- printed as a
+source-commit comment, and posted to Slack too if SLACK_WEBHOOK_URL is set (see
+slack.py). Neither is required; Slack has no toggle of its own since it carries
+no authority over the sync, only whether the env var is set.
 """
 from __future__ import annotations
 
@@ -22,15 +16,10 @@ def comment_on_commit(commit_sha: str, body: str) -> str:
 
 
 def pr_opened(project_label: str, title: str, detail: str) -> None:
-    """Slack-only -- a successfully opened PR is already visible on GitHub itself
-    (reviewers watching that repo see it there); this just saves someone from
-    having to notice it. `project_label` is cli.py's `project_label` -- either
-    `SyncConfig.project_name` (e.g. "Prod") if set, or the mechanical
-    `label:mapping_key` fallback if not; see cli.py's run_direction. `detail` is
-    whatever publish.open_pr produced: a real PR URL (rendered as a Slack link --
-    `<url|text>` is Slack's own mrkdwn syntax, not `[text](url)`, which Slack does
-    not render as a link at all), or the dry-run preview text if no remote is
-    configured (no real URL to link to, so `title` alone is posted instead)."""
+    """Slack-only -- an opened PR is already visible on GitHub, this just flags it.
+    `detail` is publish.open_pr's result: a real PR URL (rendered as a Slack link,
+    `<url|text>`, not Markdown) or dry-run preview text (no URL to link, so just
+    `title` is posted)."""
     if detail.startswith("[dry-run"):
         slack.post(f"[{project_label}] PR opened (dry-run): {title}")
     else:

@@ -1,26 +1,15 @@
 """LLM PR writer — turns already-scrubbed sync information into a human-readable
-public PR title/body. Advisory only: never part of the sync/security authority.
+public PR title/body. Advisory only: runs after mapping/scrub/secretscan/break_check
+have already passed, and never decides whether the sync itself proceeds.
 
-Everything upstream of this module (mapping, scrub, secretscan, break_check) is
-unchanged and still fully deterministic. This module only runs after all of those
-have already passed -- it explains a change that's already been decided safe to
-propose, it never decides that itself.
+Two writers share one interface (PRWriter): DeterministicPRWriter (no network,
+always available, used when the feature is off or OpenAIPRWriter fails) and
+OpenAIPRWriter (one structured-output call). The only thing an LLM ever sees is
+PRContext -- the far side's own already-scrubbed diff/file list/mapping metadata,
+never the near/production repo or its commit message.
 
-Two writers share one interface (PRWriter):
-- DeterministicPRWriter: no network, no LLM, always available. Used when the
-  feature is disabled, the API key is missing, or OpenAIPRWriter fails for any
-  reason -- OpenAI availability is never a dependency of the sync itself.
-- OpenAIPRWriter: one structured-output call, no tools, no handoffs, nothing that
-  could let model output affect anything but its own PR-content fields.
-
-The one thing an LLM ever sees here is PRContext -- built entirely from the far
-side's own already-written tree (candidate diff, changed file list, mapping
-metadata). It never sees the near/production repo, the production commit message,
-or anything scrub/secretscan already stripped.
-
-The PR body template has a "Types of Changes" checklist -- `change_types` is a
-list of a *fixed* enum (`ChangeType`), not free text, so the model can select from
-a closed set of real categories, never invent a new one.
+`change_types` is a list of a fixed enum, not free text, so the model can only
+select from real categories, never invent one.
 """
 from __future__ import annotations
 
@@ -103,12 +92,9 @@ Return only the requested structured output."""
 
 
 class ValidationSummary(BaseModel):
-    # The actual break_check.run command, if one was configured for this mapping --
-    # None means nothing was tested (see render_markdown's Test Plan section, which
-    # stays empty in that case rather than claiming a fact that isn't true). By the
-    # time PRContext is ever built, a configured break_check has already passed --
-    # a failure halts before this point (see cli.py's run_direction) -- so there's no
-    # "failed" state to represent here, only "ran" or "nothing to run."
+    # The actual break_check.run command, or None if nothing was configured. No
+    # "failed" state: a configured check has already passed by the time this is
+    # built (a failure halts earlier), so it's only ever "ran" or "nothing to run."
     run_command: str | None = None
 
 
@@ -186,11 +172,7 @@ class OpenAIPRWriter:
         self._model = model
 
     def generate(self, context: PRContext) -> GeneratedPRContent:
-        # Any failure here -- including llm_client.LLMCallFailed -- propagates up to
-        # build_pr_content()'s generic `except Exception`, which is where "fall back
-        # to the deterministic writer" actually happens. Nothing is caught here on
-        # purpose: this module has no fail-open/fail-closed decision to make, only
-        # build_pr_content() does.
+        # Failures propagate to build_pr_content()'s fallback -- not caught here.
         return llm_client.structured_call(
             api_key=self._api_key,
             model=self._model,
@@ -201,33 +183,25 @@ class OpenAIPRWriter:
 
 
 def get_pr_writer(enabled: bool) -> PRWriter:
-    """Never touches the network or requires OPENAI_API_KEY unless `enabled` is True
-    *and* a key is actually present -- disabled-by-config and disabled-by-missing-key
-    are both just "use the deterministic writer," not an error."""
+    """Disabled-by-config and disabled-by-missing-key both just mean "use the
+    deterministic writer," never an error."""
     if not enabled:
         return DeterministicPRWriter()
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return DeterministicPRWriter()
-    # `or` rather than dict.get(..., default): action.yml always sets this env var,
-    # empty string when the workflow didn't provide an override -- an empty string is
-    # "not provided," not a literal model name.
+    # `or`, not dict.get(default=): action.yml always sets this env var, empty
+    # string when unset by the workflow -- empty means "not provided."
     model = os.environ.get("OPENAI_PR_MODEL") or _DEFAULT_MODEL
     return OpenAIPRWriter(api_key=api_key, model=model)
 
 
 def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
     """Follows this project's own PR template (Summary/Why/What/Solution, Types of
-    Changes, Test Plan). The Test Plan section is appended here from `context`
-    directly -- never from `generated` -- regardless of what an LLM writer said.
-    Even a fully-hijacked GeneratedPRContent (e.g. via prompt injection in the
-    diff) cannot change what this function reports there, and change_types is
-    drawn from a closed enum, so it can't inject arbitrary checklist items either.
-
-    No "Related Issues" section -- this pipeline never has a real ticket/issue
-    reference to put there, and no traceability line is dropped in its place
-    either: the source SHA still lives in the commit trailer (see cli.py's
-    reword_commit call), just not repeated in the PR body itself."""
+    Changes, Test Plan). Test Plan is built from `context`, never `generated` --
+    a hijacked GeneratedPRContent (e.g. prompt injection in the diff) can't change
+    what's reported there, and change_types is a closed enum, so it can't inject
+    arbitrary checklist items either."""
     lines = ["## Summary", "", "### Why", "", generated.why, "", "### What", ""]
     lines += [f"- {item}" for item in generated.what]
     lines += ["", "### Solution", "", generated.solution, ""]
@@ -252,9 +226,8 @@ def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
 
 
 def build_pr_content(context: PRContext, *, llm_enabled: bool) -> tuple[str, str]:
-    """Orchestration: try the configured writer, fall back to deterministic on any
-    failure. OpenAI availability is never a reason the sync itself fails -- only
-    `publish.open_pr`'s own git push / gh pr create failures are (see cli.py)."""
+    """Tries the configured writer, falls back to deterministic on any failure --
+    OpenAI availability is never a reason the sync itself fails."""
     print(f"[pr-writer] generating PR content for mapping {context.mapping_key}")
     writer = get_pr_writer(llm_enabled)
     if isinstance(writer, DeterministicPRWriter):
@@ -264,8 +237,8 @@ def build_pr_content(context: PRContext, *, llm_enabled: bool) -> tuple[str, str
             generated = writer.generate(context)
             print(f"[pr-writer:{context.mapping_key}] LLM PR generation succeeded")
         except Exception as exc:
-            # Safe error category only -- never the exception's full payload, which
-            # for some SDK error types can echo back request/response content.
+            # Error category only -- never the exception payload, which some SDK
+            # error types can echo request/response content back into.
             print(
                 f"[pr-writer:{context.mapping_key}] LLM PR generation failed "
                 f"({type(exc).__name__}); using deterministic fallback"

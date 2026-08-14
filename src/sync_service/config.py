@@ -16,11 +16,8 @@ from pydantic import BaseModel, field_validator, model_validator
 class RedactRule(BaseModel):
     pattern: str
     replace: str
-    # Optional label for what kind of thing this rule strips (e.g. "tenant_config",
-    # "internal_endpoint") -- never the matched value itself, just a category name.
-    # Surfaced to the LLM PR writer (pr_writer.py) as scrubbed_categories so a PR body
-    # can truthfully say "production-specific configuration was excluded" without
-    # ever naming what it was.
+    # Category name only, never the matched value -- surfaced to pr_writer.py as
+    # scrubbed_categories so the PR body can say what kind of thing was excluded.
     category: str | None = None
 
     @field_validator("pattern")
@@ -45,20 +42,14 @@ class Mapping(BaseModel):
     dest: str = "."
     exclude: list[str] = []
     redact: list[RedactRule] = []
-    # Reverse of `redact` — applied when a change flows dest -> source (OSS -> production),
-    # e.g. placeholder -> real endpoint. Only relevant if the OSS -> production direction is enabled.
+    # Reverse of `redact`, for the OSS -> production direction (e.g. placeholder -> real endpoint).
     hydrate: list[RedactRule] = []
     break_check: BreakCheck
-    # Break check to run in the *production* repo when propagating dest -> source.
-    # No default command makes sense here (production repos rarely expose one uniform
-    # "run" command the way OSS demo/smoke commands do) — omit to skip and rely on the
-    # production repo's own CI as the safety net for that direction.
+    # Break check for the reverse direction. No default: unlike OSS repos, production
+    # rarely has one uniform "run" command -- omit to rely on production's own CI instead.
     reverse_break_check: BreakCheck | None = None
-    # A human-authored, static line explaining why this mapping propagates at all --
-    # written once for public consumption, same as `key`/`source`/`dest` already are.
-    # Not derived from any commit: the PR body needs *some* safe "why" (see v7's note
-    # on why the production commit message can't be that), and this is the one place
-    # free text can appear without it coming from an uncontrolled source.
+    # Static, human-authored "why this mapping propagates" -- the one place free text
+    # can appear in the PR body without coming from the (untrusted) production commit.
     public_reason: str | None = None
 
     @field_validator("dest")
@@ -70,18 +61,14 @@ class Mapping(BaseModel):
 
 
 class LLMPRConfig(BaseModel):
-    # Off by default: the PR title/body stay fully deterministic (pr_writer.py's
-    # DeterministicPRWriter) unless a mapping config explicitly opts in. Enabling this
-    # never makes OpenAI availability a dependency of the sync itself -- pr_writer.py
-    # falls back to the deterministic writer on any failure, missing key, or when
-    # this is False.
+    # Off by default -- pr_writer.py falls back to a deterministic writer on any
+    # failure/missing key, so OpenAI is never a dependency of the sync itself.
     enabled: bool = False
 
 
 class SafetyReviewConfig(BaseModel):
-    # Off by default. Unlike llm_pr, enabling this and then having it fail to run
-    # (missing key, API error, content too large) is NOT a safe fallback -- it's a
-    # hard halt, no PR. See safety_review.py's module docstring.
+    # Off by default. Unlike llm_pr, a failure here (missing key, API error, content
+    # too large) is a hard halt, not a safe fallback -- see safety_review.py.
     enabled: bool = False
 
 
@@ -89,11 +76,8 @@ class SyncConfig(BaseModel):
     mappings: list[Mapping]
     llm_pr: LLMPRConfig = LLMPRConfig()
     llm_safety_review: SafetyReviewConfig = SafetyReviewConfig()
-    # Human-readable label for this deployment (e.g. "Prod"), used only in
-    # Slack-bound notifications -- swaps the mechanical `[sync:app]`-style prefix
-    # for something a channel of humans can actually read at a glance. Optional:
-    # unset means each notification falls back to the old mechanical
-    # `label:mapping_key` prefix (see cli.py's run_direction).
+    # Human-readable label for Slack notifications (e.g. "Prod"); unset falls back
+    # to the mechanical `label:mapping_key` prefix (see cli.py's run_direction).
     project_name: str | None = None
 
     @model_validator(mode="after")

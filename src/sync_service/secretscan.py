@@ -16,10 +16,8 @@ _PATTERNS = {
 
 
 class SecretHit(dict):
-    """{"path": ..., "rule": ...} — deliberately no matched value. A hit needs to be
-    logged/printed so a human can find and fix it, and anything printable eventually
-    gets printed somewhere (a log, a comment) — so the actual secret text never enters
-    this structure in the first place, rather than trusting every caller not to."""
+    """{"path": ..., "rule": ...} -- deliberately no matched value, since this gets
+    printed/logged and the actual secret text must never enter it in the first place."""
 
 
 def scan(desired: dict[str, str]) -> list[SecretHit]:

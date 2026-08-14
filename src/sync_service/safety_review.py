@@ -1,15 +1,11 @@
 """Semantic safety review — an optional, advisory LLM gate for the one category of
 leak `scrub`/`secretscan` structurally can't catch: business-context prose (a real
-customer name, an internal deal reference, proprietary logic described in a comment)
-that doesn't match any regex pattern.
+customer name, an internal deal reference, proprietary logic in a comment) that
+doesn't match any regex pattern.
 
-This is NOT `pr_writer.py`. Where the PR writer is cosmetic and fails *open* (any
-error → fall back to a plain deterministic PR, sync still succeeds), this is a
-security gate and fails *closed*: any error here — a timeout, a bad key, malformed
-output, content too large to review confidently — is a hard block, never treated as
-an implicit pass. It runs over the exact same `desired` dict `secretscan.scan()`
-already scans, at the same point in the pipeline, before anything is written to the
-destination repo's working tree.
+Unlike `pr_writer.py` (cosmetic, fails *open*), this is a security gate and fails
+*closed*: any error — timeout, bad key, malformed output, content too large — is a
+hard block, never an implicit pass.
 """
 from __future__ import annotations
 
@@ -20,9 +16,8 @@ from pydantic import BaseModel
 from . import llm_client
 
 _DEFAULT_MODEL = llm_client.DEFAULT_MODEL
-# Fail closed, not truncate-and-hope: if the candidate content is too large to send
-# in full, we cannot honestly claim to have reviewed all of it, so this is treated
-# the same as any other reason the review couldn't run.
+# Fail closed, not truncate-and-hope: too large to review in full is treated the
+# same as any other reason the review couldn't run.
 _MAX_REVIEW_CHARS = 40_000
 
 _SYSTEM_PROMPT = """You are a security/privacy reviewer for a service that copies code \
@@ -84,10 +79,9 @@ def _user_content(context: SafetyReviewContext) -> str:
 
 
 def review(context: SafetyReviewContext, *, enabled: bool) -> SafetyVerdict | None:
-    """Returns None if disabled -- not reviewed at all, same as if this feature
-    didn't exist. Returns a SafetyVerdict if the review actually ran (whether it
-    passed or not). Raises SafetyReviewUnavailable if enabled but no verdict could
-    be obtained -- the caller must halt, not proceed, on that exception."""
+    """None if disabled. A SafetyVerdict if the review ran (pass or fail). Raises
+    SafetyReviewUnavailable if enabled but no verdict could be obtained -- callers
+    must halt, not proceed, on that exception."""
     if not enabled:
         return None
 
@@ -106,9 +100,7 @@ def review(context: SafetyReviewContext, *, enabled: bool) -> SafetyVerdict | No
         )
 
     model = os.environ.get("OPENAI_SAFETY_MODEL") or _DEFAULT_MODEL
-    # Unlike pr_writer.py, this module *is* the fail-closed boundary -- every
-    # failure, of either kind below, becomes the same SafetyReviewUnavailable, which
-    # cli.py treats as a hard halt, never a pass.
+    # Every failure below becomes the same SafetyReviewUnavailable -- cli.py halts on it.
     try:
         return llm_client.structured_call(
             api_key=api_key,

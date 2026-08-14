@@ -10,12 +10,8 @@ from pathlib import Path
 
 from .config import RedactRule
 
-# Always excluded, regardless of the mapping's own exclude list — mechanical necessities
-# of the tool itself, not a content decision. Relevant now that source/dest default to
-# the whole repo: without this, a full-repo mapping would try to copy the other repo's
-# .git internals, each side's own sync bookkeeping, and — since actions/checkout won't
-# place a checkout outside $GITHUB_WORKSPACE — the target checkout action.yml makes,
-# into the other repo's tree.
+# Always excluded regardless of the mapping's own exclude list -- mechanical
+# necessities (repo internals, sync bookkeeping), not a content decision.
 _ALWAYS_EXCLUDE = {".git", ".sync-state", ".sync-service-target"}
 
 
@@ -29,11 +25,8 @@ def apply(
     """Copy repo_root/source -> dest with excludes dropped and transform_rules applied.
 
     Returns ({relative_dest_path: file_contents}, categories_triggered) -- the second
-    element is the sorted, deduped set of transform_rules[i].category for rules that
-    actually replaced something in at least one file (not just every category present
-    in config). Consumed by pr_writer.py's PRContext.scrubbed_categories -- a category
-    label, never the matched text itself.
-    """
+    is the deduped set of rule categories that actually replaced something (not
+    just every category present in config). Feeds pr_writer.py's scrubbed_categories."""
     source_root = repo_root / source
     excluded = {str(Path(p)) for p in exclude}
     desired: dict[str, str] = {}

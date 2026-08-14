@@ -1,15 +1,9 @@
-"""Slack notifications — a second, best-effort channel alongside notify.py's GitHub
-commit comments. Posts to an Incoming Webhook URL configured via SLACK_WEBHOOK_URL,
-optionally directed at a specific channel via SLACK_CHANNEL (only meaningful if the
-webhook's own app is configured to honor a channel override -- some are, some
-aren't; harmless to set either way, since Slack just ignores an override its app
-doesn't support rather than rejecting the request).
+"""Slack notifications -- a second, best-effort channel alongside notify.py's GitHub
+commit comments. Posts to an Incoming Webhook URL (SLACK_WEBHOOK_URL), optionally
+directed at a channel (SLACK_CHANNEL, ignored by webhook apps that don't support it).
 
-Best-effort by design: Slack availability must never become a dependency of the
-sync succeeding, so every failure (no webhook configured, network error, a non-2xx
-response) is swallowed and logged, never raised. Contrast with safety_review.py,
-where a failure to reach OpenAI is a hard halt -- this module has no authority
-over the sync at all, only pr_writer.py-style "best effort, never a dependency."
+Best-effort by design: every failure is swallowed and logged, never raised --
+Slack availability must never become a dependency of the sync succeeding.
 """
 from __future__ import annotations
 
@@ -37,9 +31,7 @@ def post(text: str) -> bool:
         )
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             delivered = 200 <= response.status < 300
-            # Only prints when a webhook is actually configured -- the "not
-            # configured at all" early return above stays silent, so a run with no
-            # Slack setup doesn't gain log noise it didn't have before this feature.
+            # Only when actually configured -- an unconfigured run stays silent.
             print(f"[slack] {'posted' if delivered else f'failed (status {response.status})'}")
             return delivered
     except Exception as exc:

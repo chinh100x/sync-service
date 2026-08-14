@@ -4,11 +4,9 @@ standing in for "the production repo" and "the open source repo" — no GitHub n
 Walks through:
   STEP 1 — first sync, two mappings at once (forward)
   STEP 2 — secret scan halt (forward)
-  STEP 3 — an outside OSS edit gets silently overwritten by the next forward sync.
-           There's no manifest / conflict tracking: a run always overwrites the far
-           side's tracked files with the near side's current content. That's the
-           deliberate tradeoff of not tracking sync state at all -- simpler, at the
-           cost of ever detecting an outside edit before clobbering it.
+  STEP 3 — an outside OSS edit gets silently overwritten by the next forward sync
+           (no manifest / conflict tracking -- a run always overwrites the far
+           side's tracked files with the near side's current content)
   STEP 4 — break check failure (forward), working tree reverted
   STEP 4b — bug fixed, forward sync succeeds on retry
   STEP 5 — no-op (touched file isn't under any mapping)
@@ -39,11 +37,9 @@ _BRANCH_RE = re.compile(r"Would open PR (\S+) ->")
 
 
 class _Tee:
-    """Writes to the real stdout (so the demo still narrates live) while also
-    capturing into a buffer this script parses -- branch names aren't predictable
-    from outside (a title-derived slug, occasionally disambiguated with a sha suffix
-    on a rare same-title collision), so this reads them back from what cli.main()
-    actually printed instead of guessing at the naming scheme."""
+    """Writes to real stdout (demo still narrates live) while also capturing into a
+    buffer -- branch names aren't predictable from outside, so this reads them back
+    from cli.main()'s own output instead of guessing."""
 
     def __init__(self, *streams):
         self.streams = streams
@@ -98,12 +94,11 @@ def main() -> None:
     write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
     sha0 = commit(prod, "initial")
 
-    # sync/monitoring.yaml lives in the prod repo, next to the code it maps. redact/hydrate
-    # are inverses of the same rule: redact scrubs prod -> OSS, hydrate restores OSS -> prod.
+    # redact/hydrate are inverses: redact scrubs prod -> OSS, hydrate restores OSS -> prod.
     write(
         prod,
         "sync/monitoring.yaml",
-        f"""\
+        """\
         mappings:
           - key: portmon
             source: src/portmon
@@ -139,9 +134,8 @@ def main() -> None:
     config_path = prod / "sync" / "monitoring.yaml"
 
     def run(base: str, head: str, label: str, direction: str = "forward") -> list[str]:
-        """Returns the branch name(s) cli.main() actually opened a PR (or dry-run)
-        for, in print order -- read back from its own output rather than guessed,
-        since the final name isn't derivable from base/head/direction alone anymore."""
+        """Returns the branch name(s) cli.main() actually opened a PR for, read back
+        from its own output rather than guessed."""
         header(label)
         buf = io.StringIO()
         with contextlib.redirect_stdout(_Tee(sys.stdout, buf)):
@@ -248,9 +242,9 @@ def main() -> None:
     print("brk/mod.py on oss main still has the old, working version:",
           "boom" not in (oss / "brk" / "mod.py").read_text())
 
-    # ---- sha4b: human fixes the bug and retries ----
-    # Deliberately not identical to the pre-bug content, so this actually has something
-    # to commit — see test_publish.py for the "genuinely nothing changed" case instead.
+    # ---- sha4b: human fixes the bug and retries (not identical to pre-bug content,
+    # so there's actually something to commit -- see test_publish.py for the
+    # "nothing changed" case) ----
     fixed_brk = "def run():\n    print('brk ok, fixed')\n\nif __name__ == '__main__':\n    run()\n"
     write(prod, "src/brk/mod.py", fixed_brk)
     sha4b = commit(prod, "brk: fix the bug")

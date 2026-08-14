@@ -1,9 +1,6 @@
-"""Shared OpenAI structured-output call, used by both pr_writer.py and
-safety_review.py. Only the plumbing is shared here -- constructing the client and
-making one `responses.parse(..., store=False)` call. What a failure *means* stays
-entirely at the call site: pr_writer.py treats any failure as "fall back to the
-deterministic writer" (cosmetic, fail-open); safety_review.py treats any failure
-as "halt, no PR" (a security gate, fail-closed). Deliberately not decided here.
+"""Shared OpenAI structured-output call, used by pr_writer.py and safety_review.py.
+Only the plumbing is shared -- what a failure *means* (fail-open vs. fail-closed)
+is decided entirely at the call site, not here.
 """
 from __future__ import annotations
 
@@ -19,10 +16,8 @@ _T = TypeVar("_T", bound=BaseModel)
 
 
 class LLMCallFailed(Exception):
-    """Raised only when the call succeeded but produced no usable structured
-    output (a refusal or an empty response). Any other failure -- timeout, auth,
-    rate limit, network error -- propagates as whatever the openai SDK itself
-    raises; callers decide how to handle both kinds, this function doesn't."""
+    """Only for a call that succeeded but returned no usable output (refusal or
+    empty response). Other failures propagate as whatever the openai SDK raises."""
 
 
 def structured_call(
