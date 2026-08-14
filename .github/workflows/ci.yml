@@ -9,6 +9,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uv sync --dev
-      - run: uv run ruff check .
-      - run: uv run pytest -v
+      - run: make install
+      - run: make check

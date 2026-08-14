@@ -34,6 +34,7 @@ src/sync_service/
 tests/unit/         one test file per module
 tests/integration/  full end-to-end scenarios through cli.main() against two local git repos — no GitHub needed
 action.yml          composite GitHub Action wrapping the CLI, for real deployment
+Makefile            `make install` / `make lint` / `make test` / `make check` (lint + test) — same targets CI runs
 ```
 
 ## Try it locally
@@ -41,16 +42,16 @@ action.yml          composite GitHub Action wrapping the CLI, for real deploymen
 ### 1. One-time setup
 
 ```bash
-uv sync --dev
+make install
 ```
-Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`. No GitHub token, no `gitleaks` binary, no real repos needed for any of this.
+Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`. No GitHub token, no `gitleaks` binary, no real repos needed for any of this.
 
-### 2. Run the tests
+### 2. Lint and run the tests
 
 ```bash
-uv run pytest -v
+make check   # make lint + make test
 ```
-82 tests, no GitHub involved: unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `cli.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run).
+Lint is `ruff` (unused imports/names, undefined names — not layered with style rules this codebase doesn't follow). Tests: 82 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `cli.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs the same `make check` on every push/PR.
 
 ### 3. See one end-to-end scenario narrated, with output
 
