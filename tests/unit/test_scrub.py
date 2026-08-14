@@ -45,14 +45,6 @@ def test_redact_reports_triggered_category_only_when_a_rule_actually_fires(tmp_p
     assert categories == ["internal_endpoint"]  # never_fires's category is absent -- it never matched anything
 
 
-def test_hydrate_reverses_a_redact_style_rule(tmp_path):
-    # same mechanism, opposite direction: placeholder -> real value
-    _write(tmp_path, "plugin/covenant.py", 'ENDPOINT = "<MCP_ENDPOINT>"\n')
-    rule = RedactRule(pattern=r"<MCP_ENDPOINT>", replace="https://cag-mcp.internal/v1/report")
-    desired, _categories = apply(tmp_path, "plugin", "src/portmon", exclude=[], transform_rules=[rule])
-    assert "https://cag-mcp.internal/v1/report" in desired["src/portmon/covenant.py"]
-
-
 def test_whole_repo_mapping_never_walks_mechanical_dirs(tmp_path):
     # A full-repo mapping (source=".") must never propagate git internals, the tool's
     # own manifest, or the target checkout action.yml places inside the workspace —

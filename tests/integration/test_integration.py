@@ -1,9 +1,9 @@
 """End-to-end coverage through cli.main() for scenarios no other test file
 exercises at the orchestration level: multiple mappings in one run, the
 no-divergence-tracking overwrite behavior, a break-check halt/revert/retry
-cycle, a no-op run, and the reverse (OSS -> production) direction with hydrate.
-Replaces demo/run_demo.py, which only printed these for a human to eyeball --
-this asserts on them instead, so a regression actually fails CI.
+cycle, and a no-op run. Replaces demo/run_demo.py, which only printed these
+for a human to eyeball -- this asserts on them instead, so a regression
+actually fails CI.
 """
 import re
 import subprocess
@@ -24,18 +24,12 @@ mappings:
     redact:
       - pattern: 'https://cag-mcp\\.internal[^\\s"]*'
         replace: '<MCP_ENDPOINT>'
-    hydrate:
-      - pattern: '<MCP_ENDPOINT>'
-        replace: 'https://cag-mcp.internal/v1/report'
     break_check:
       install: "true"
       run: "true"
   - key: brk
     source: src/brk
     dest: brk
-    hydrate:
-      - pattern: '<MCP_ENDPOINT>'
-        replace: 'https://cag-mcp.internal/v1/report'
     break_check:
       install: "true"
       run: "python3 brk/mod.py"
@@ -72,7 +66,7 @@ def _init_pair(tmp_path):
     return prod, oss
 
 
-def _run(prod, oss, base, head, direction="forward"):
+def _run(prod, oss, base, head):
     return cli.main(
         [
             "run",
@@ -81,7 +75,6 @@ def _run(prod, oss, base, head, direction="forward"):
             "--dest-repo", str(oss),
             "--base", base,
             "--head", head,
-            "--direction", direction,
         ]
     )
 
@@ -200,24 +193,3 @@ def test_commit_touching_no_mapping_is_a_noop(tmp_path, capsys):
     assert exit_code == 0
     assert "no mapping touched" in printed
     assert _BRANCH_RE.findall(printed) == []
-
-
-def test_reverse_direction_hydrates_and_opens_a_pr_onto_production(tmp_path, capsys):
-    prod, oss = _init_pair(tmp_path)
-    _write(prod, "src/brk/mod.py", "def run():\n    print('cag-mcp.internal reachable')\n")
-    _commit(prod, "initial")
-    _write(oss, "brk/mod.py", "def run():\n    print('cag-mcp.internal reachable')\n")
-    base = _commit(oss, "initial")
-
-    # an OSS contributor references the placeholder endpoint directly
-    _write(oss, "brk/mod.py", "def run():\n    print('<MCP_ENDPOINT> reachable')\n")
-    head = _commit(oss, "outside PR: note the endpoint")
-
-    exit_code = _run(prod, oss, base, head, direction="reverse")
-    printed = capsys.readouterr().out
-
-    assert exit_code == 0
-    branches = _BRANCH_RE.findall(printed)
-    assert len(branches) == 1
-    proposed = _git(prod, "show", f"{branches[0]}:src/brk/mod.py").stdout
-    assert "cag-mcp.internal" in proposed and "<MCP_ENDPOINT>" not in proposed  # hydrated back

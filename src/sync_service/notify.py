@@ -1,4 +1,4 @@
-"""Notify: every halt/error from run_direction is routed here -- printed as a
+"""Notify: every halt/error from run_mapping is routed here -- printed as a
 source-commit comment, and posted to Slack too if SLACK_WEBHOOK_URL is set (see
 slack.py). Neither is required; Slack has no toggle of its own since it carries
 no authority over the sync, only whether the env var is set.

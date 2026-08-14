@@ -1,8 +1,5 @@
 """Scrub: exclude list + regex substitution. Mechanical, no AI judgment.
-
-Direction-agnostic: forward (production -> OSS) applies `redact` walking `mapping.source`
-into `mapping.dest`; reverse (OSS -> production) applies `hydrate` walking `mapping.dest`
-into `mapping.source` — same function, arguments swapped by the caller.
+Applies `redact`, walking `mapping.source` into `mapping.dest`.
 """
 from __future__ import annotations
 

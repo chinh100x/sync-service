@@ -1,22 +1,18 @@
 name: sync-service
-description: Propagate a commit between a production repo and its OSS target, per architecture.md (v2, bidirectional)
+description: Propagate a commit from a production repo to its OSS target, opening a PR
 inputs:
   config:
     description: The mapping config itself — inline YAML content (not a path), embedded directly in the calling workflow.
     required: true
-  direction:
-    description: "forward = production -> OSS (this workflow lives in the production repo); reverse = OSS -> production (this workflow lives in the OSS repo)"
-    required: false
-    default: forward
   target-repo:
-    description: "owner/repo of the *other* repository (OSS repo for a forward run; production repo for a reverse run)"
+    description: "owner/repo of the OSS repo"
     required: true
   target-branch:
     description: Target repo's default branch
     required: false
     default: main
   target-token:
-    description: Token with contents:write + pull_requests:write on target-repo (GitHub App installation token or scoped PAT). For reverse, this must be scoped to the *production* repo, not the OSS repo.
+    description: Token with contents:write + pull_requests:write on target-repo (GitHub App installation token or scoped PAT).
     required: true
   base:
     description: Base SHA of the diff to consider (e.g. github.event.before)
@@ -120,22 +116,10 @@ runs:
         SLACK_CHANNEL: ${{ inputs.slack-channel }}
       run: |
         set -euo pipefail
-        TARGET="${{ github.workspace }}/.sync-service-target"
-        HERE="${{ github.workspace }}"
-
-        if [ "${{ inputs.direction }}" = "forward" ]; then
-          SOURCE_REPO="$HERE"    # this workflow runs in the production repo
-          DEST_REPO="$TARGET"    # target is the OSS repo
-        else
-          SOURCE_REPO="$TARGET"  # target is the production repo
-          DEST_REPO="$HERE"      # this workflow runs in the OSS repo
-        fi
-
         sync-service run \
           --config "${{ runner.temp }}/sync-service-config.yaml" \
-          --source-repo "$SOURCE_REPO" \
-          --dest-repo "$DEST_REPO" \
+          --source-repo "${{ github.workspace }}" \
+          --dest-repo "${{ github.workspace }}/.sync-service-target" \
           --base "${{ inputs.base }}" \
           --head "${{ inputs.head }}" \
-          --base-branch "${{ inputs.target-branch }}" \
-          --direction "${{ inputs.direction }}"
+          --base-branch "${{ inputs.target-branch }}"

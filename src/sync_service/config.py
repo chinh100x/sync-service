@@ -42,12 +42,7 @@ class Mapping(BaseModel):
     dest: str = "."
     exclude: list[str] = []
     redact: list[RedactRule] = []
-    # Reverse of `redact`, for the OSS -> production direction (e.g. placeholder -> real endpoint).
-    hydrate: list[RedactRule] = []
     break_check: BreakCheck
-    # Break check for the reverse direction. No default: unlike OSS repos, production
-    # rarely has one uniform "run" command -- omit to rely on production's own CI instead.
-    reverse_break_check: BreakCheck | None = None
     # Static, human-authored "why this mapping propagates" -- the one place free text
     # can appear in the PR body without coming from the (untrusted) production commit.
     public_reason: str | None = None
