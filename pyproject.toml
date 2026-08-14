@@ -22,4 +22,14 @@ packages = ["src/sync_service"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.6",
 ]
+
+[tool.ruff.lint]
+# Default set (pyflakes + a slice of pycodestyle) is enough here -- unused
+# imports/names, undefined names, obvious bugs. Not layering on style rules
+# (import sorting, docstring conventions, etc.) beyond what's already the norm.
+select = ["E", "F"]
+# Comments/lines run long by design (explaining the why, not wrapped to a
+# column count) -- a real style choice here, not a gap to close.
+ignore = ["E501"]
