@@ -104,9 +104,13 @@ Return only the requested structured output."""
 
 
 class ValidationSummary(BaseModel):
-    secret_scan: str
-    install: str
-    run: str
+    # The actual break_check.run command, if one was configured for this mapping --
+    # None means nothing was tested (see render_markdown's Test Plan section, which
+    # stays empty in that case rather than claiming a fact that isn't true). By the
+    # time PRContext is ever built, a configured break_check has already passed --
+    # a failure halts before this point (see cli.py's run_direction) -- so there's no
+    # "failed" state to represent here, only "ran" or "nothing to run."
+    run_command: str | None = None
 
 
 class PRContext(BaseModel):
@@ -116,7 +120,6 @@ class PRContext(BaseModel):
     sanitized_diff: str
     scrubbed_categories: list[str] = []
     validation: ValidationSummary
-    source_sha: str
 
 
 class GeneratedPRContent(BaseModel):
@@ -140,11 +143,11 @@ class DeterministicPRWriter:
 
     def generate(self, context: PRContext) -> GeneratedPRContent:
         what = [f"`{f}`" for f in context.changed_files] or ["No files changed."]
-        why = context.public_reason or "Propagated by the automated sync service."
+        why = context.public_reason or "Keeps the public copy in sync with this change."
         solution = (
-            "Mechanically propagated by sync-service: scrubbed, secret-scanned, and "
-            "break-checked before this PR was opened. No manual implementation "
-            "decisions were made for this change."
+            "Propagated automatically from the source repository: scrubbed of "
+            "internal-only detail and validated before this PR was opened. No "
+            "manual implementation decisions were made for this change."
         )
         if context.scrubbed_categories:
             solution += (
@@ -216,12 +219,16 @@ def get_pr_writer(enabled: bool) -> PRWriter:
 
 def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
     """Follows this project's own PR template (Summary/Why/What/Solution, Types of
-    Changes, Test Plan, Related Issues). The Test Plan section is appended here
-    from `context` directly -- never from `generated` -- regardless of what an LLM
-    writer said. Even a fully-hijacked GeneratedPRContent (e.g. via prompt
-    injection in the diff) cannot change what this function reports there, and
-    change_types is drawn from a closed enum, so it can't inject arbitrary
-    checklist items either."""
+    Changes, Test Plan). The Test Plan section is appended here from `context`
+    directly -- never from `generated` -- regardless of what an LLM writer said.
+    Even a fully-hijacked GeneratedPRContent (e.g. via prompt injection in the
+    diff) cannot change what this function reports there, and change_types is
+    drawn from a closed enum, so it can't inject arbitrary checklist items either.
+
+    No "Related Issues" section -- this pipeline never has a real ticket/issue
+    reference to put there, and no traceability line is dropped in its place
+    either: the source SHA still lives in the commit trailer (see cli.py's
+    reword_commit call), just not repeated in the PR body itself."""
     lines = ["## Summary", "", "### Why", "", generated.why, "", "### What", ""]
     lines += [f"- {item}" for item in generated.what]
     lines += ["", "### Solution", "", generated.solution, ""]
@@ -232,13 +239,16 @@ def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
         lines.append(f"- [{checked}] {label}")
     lines.append("")
 
-    lines += ["## Test Plan", "", "Automated by sync-service -- no manual steps needed:", ""]
-    lines.append(f"- Secret scan: {context.validation.secret_scan}")
-    lines.append(f"- Install: {context.validation.install}")
-    lines.append(f"- Run: {context.validation.run}")
-    lines.append("")
+    # Reports what was actually tested *in the destination repo* -- the real
+    # break_check.run command, not a description of this tool's own pipeline.
+    # Empty (heading only) when nothing was configured to run, per the template's
+    # own "if nothing to test, leave it empty" instruction -- never a fabricated
+    # "no manual steps needed" line standing in for a fact that isn't true.
+    lines += ["## Test Plan", ""]
+    if context.validation.run_command:
+        lines.append(f"Ran `{context.validation.run_command}` in the destination repo -- passing.")
+        lines.append("")
 
-    lines += ["## Related Issues", "", f"Source sync: `{context.source_sha}`"]
     return "\n".join(lines) + "\n"
 
 

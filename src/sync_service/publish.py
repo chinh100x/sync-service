@@ -17,10 +17,15 @@ def _basic_auth_header(token: str) -> str:
     return f"AUTHORIZATION: basic {encoded}"
 
 # Identity for the sync commits themselves — a CI runner has no git identity configured
-# by default. Override via env if the org wants a different bot identity/name.
-_COMMIT_NAME = os.environ.get("SYNC_SERVICE_COMMIT_NAME", "sync-service[bot]")
-_COMMIT_EMAIL = os.environ.get("SYNC_SERVICE_COMMIT_EMAIL", "sync-service@users.noreply.github.com")
-_GIT_ID = ["-c", f"user.name={_COMMIT_NAME}", "-c", f"user.email={_COMMIT_EMAIL}"]
+# by default. Read lazily (a function, not a frozen module-level constant) so cli.py
+# can derive a project-specific default from SyncConfig.project_name and set it via
+# os.environ *after* this module is already imported -- a constant evaluated once at
+# import time would miss that. An explicit SYNC_SERVICE_COMMIT_NAME/_EMAIL always wins
+# over any project_name-derived default (see cli.py's main()).
+def _git_id() -> list[str]:
+    name = os.environ.get("SYNC_SERVICE_COMMIT_NAME", "sync-service[bot]")
+    email = os.environ.get("SYNC_SERVICE_COMMIT_EMAIL", "sync-service@users.noreply.github.com")
+    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 
 def branch_name(namespace: str, head_sha: str) -> str:
@@ -34,7 +39,7 @@ def checkout_base(dest_repo: Path, base_branch: str) -> None:
     this, the second mapping's commit_to_branch() would branch off whatever the first
     mapping's branch left HEAD on, nesting one mapping's commit inside the other's PR
     instead of both branching independently off base_branch."""
-    subprocess.run(["git", *_GIT_ID, "checkout", base_branch], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(["git", *_git_id(), "checkout", base_branch], cwd=dest_repo, check=True, capture_output=True)
 
 
 def branch_exists(dest_repo: Path, branch: str) -> bool:
@@ -67,16 +72,16 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
     Returns False (no branch left behind) if there was nothing to commit — the
     propagated content was already byte-identical to what's on the far side. With
     no manifest forcing a write every run, this is a real case, not just theoretical."""
-    subprocess.run(["git", *_GIT_ID, "checkout", "-b", branch], cwd=dest_repo, check=True, capture_output=True)
-    subprocess.run(["git", *_GIT_ID, "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(["git", *_git_id(), "checkout", "-b", branch], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(["git", *_git_id(), "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
 
     nothing_staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=dest_repo).returncode == 0
     if nothing_staged:
-        subprocess.run(["git", *_GIT_ID, "checkout", "-"], cwd=dest_repo, check=True, capture_output=True)
-        subprocess.run(["git", *_GIT_ID, "branch", "-D", branch], cwd=dest_repo, check=True, capture_output=True)
+        subprocess.run(["git", *_git_id(), "checkout", "-"], cwd=dest_repo, check=True, capture_output=True)
+        subprocess.run(["git", *_git_id(), "branch", "-D", branch], cwd=dest_repo, check=True, capture_output=True)
         return False
 
-    subprocess.run(["git", *_GIT_ID, "commit", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(["git", *_git_id(), "commit", "-m", message], cwd=dest_repo, check=True, capture_output=True)
     return True
 
 
@@ -88,7 +93,7 @@ def reword_commit(dest_repo: Path, message: str) -> None:
     v14 note) -- this is NOT a reopening of v7's leak: the replacement text comes
     from the same far-side-only, already-scrubbed context the PR body already uses,
     never from anything production-side."""
-    subprocess.run(["git", *_GIT_ID, "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(["git", *_git_id(), "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
 
 
 def discard_working_tree_changes(dest_repo: Path) -> None:

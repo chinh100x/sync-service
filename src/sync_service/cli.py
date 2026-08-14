@@ -132,7 +132,6 @@ def run_direction(
     # candidate diff, changed-file list, break-check outcome); it never touches
     # near_repo/production directly, and it can fail over to a fully deterministic
     # title/body with no effect on whether the sync itself succeeds.
-    validated = far_break_check is not None
     context = pr_writer.PRContext(
         mapping_key=mapping.key,
         public_reason=mapping.public_reason,
@@ -140,11 +139,10 @@ def run_direction(
         sanitized_diff=diff.candidate_diff(far_repo, base_branch, branch),
         scrubbed_categories=scrubbed_categories,
         validation=pr_writer.ValidationSummary(
-            secret_scan="passed",  # reaching this point already required an empty `hits`
-            install="passed" if validated else "skipped",
-            run="passed" if validated else "skipped",
+            # None (nothing to report) when no break_check is configured for this
+            # direction -- reaching this line already means it passed if one was.
+            run_command=far_break_check.run if far_break_check is not None else None,
         ),
-        source_sha=head_sha[:12],
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
     # Reword the commit (still local, not yet pushed) from the mechanical placeholder
@@ -198,6 +196,17 @@ def main(argv: list[str] | None = None) -> int:
         source_repo = Path(args.source_repo)
         dest_repo = Path(args.dest_repo)
         by_mapping = {m.key: m for m in config.mappings}
+
+        # A project_name gives the commit author identity a meaningful name too, not
+        # just Slack messages -- setdefault so an explicit SYNC_SERVICE_COMMIT_NAME/
+        # _EMAIL (set directly in the workflow) always wins over this derived default.
+        # publish.py reads these lazily, so setting them here (after config is loaded,
+        # before any commit happens) takes effect even though publish was already
+        # imported. See design-history.md's v17 note.
+        if config.project_name:
+            slug = config.project_name.lower().replace(" ", "-")
+            os.environ.setdefault("SYNC_SERVICE_COMMIT_NAME", f"{config.project_name} Sync Bot")
+            os.environ.setdefault("SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com")
 
         if args.direction == "forward":
             near_repo, path_attr = source_repo, "source"
