@@ -8,8 +8,8 @@ redact/hydrate swapped — the mechanism is identical either way.
 No manifest, no divergence detection: a run always overwrites the far side's tracked
 files with the near side's current content (after the secret scan and break check both
 pass). If the far side has its own edits outside this tool, they're overwritten with no
-warning — deliberately simpler than tracking state, at the cost of the "don't overwrite
-an outside contribution" guarantee earlier versions had. See design-history.md's v5 note.
+warning — deliberately simpler than tracking state, at the cost of a "don't overwrite
+an outside contribution" guarantee that a manifest-based approach would give.
 """
 from __future__ import annotations
 
@@ -50,13 +50,13 @@ def run_direction(
     # Reset far_repo to base_branch before touching it. Without this, a prior mapping
     # processed in the same run (or a prior breakcheck-halt) can leave far_repo checked
     # out on *its own* branch — nesting this mapping's commit inside that one's PR
-    # instead of both branching independently off base_branch. See design-history.md's v8 note.
+    # instead of both branching independently off base_branch.
     publish.checkout_base(far_repo, base_branch)
 
     # Tracked via a dedicated ref, not the branch name -- the final branch name is a
     # clean, title-derived slug with no sha in it (see the rename_branch call below),
-    # so it can no longer double as the (mapping, head_sha) idempotency key the way
-    # an earlier version's sha-prefixed name did. See design-history.md's v20 note.
+    # so it can't double as the (mapping, head_sha) idempotency key the way a
+    # sha-prefixed name would.
     if publish.already_synced(far_repo, mapping.key, head_sha):
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
         return "skipped-exists"
@@ -84,7 +84,7 @@ def run_direction(
     # touches far_repo's working tree at all until both pass. Unlike pr_writer below,
     # this fails *closed*: SafetyReviewUnavailable means "couldn't confirm this is
     # safe," which is a hard halt, not an implicit pass. See safety_review.py's
-    # module docstring and design-history.md's v12 note.
+    # module docstring.
     try:
         verdict = safety_review.review(
             safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
@@ -125,14 +125,14 @@ def run_direction(
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
 
     # Deliberately not the production commit message. It's free-form human text that
-    # never goes through scrub/secretscan — see design-history.md's v7 note. Only a
-    # transient placeholder: reword_commit below replaces it with the generated title
-    # before anything is pushed, so this text is never actually visible anywhere.
+    # never goes through scrub/secretscan, so it must never reach the far side
+    # verbatim. Only a transient placeholder: reword_commit below replaces it with
+    # the generated title before anything is pushed, so this text is never actually
+    # visible anywhere.
     commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
     # Credits the actual near-side committer as this commit's Author -- the
     # Committer field (_git_id(), the bot identity) stays separate, so the pipeline's
     # involvement is still visible even though the byline now names a real person.
-    # See design-history.md's v19 note.
     author = diff.commit_author(near_repo, head_sha)
     committed = publish.commit_to_branch(far_repo, branch, message=commit_message, author=author)
     if not committed:
@@ -140,8 +140,8 @@ def run_direction(
         return "unchanged"
 
     # The PR title/body are the one place this tool tries to be human-readable rather
-    # than purely mechanical -- see design-history.md's v10 note. Everything fed into it is
-    # already-scrubbed, already-validated far-side content (this mapping's own
+    # than purely mechanical. Everything fed into it is already-scrubbed,
+    # already-validated far-side content (this mapping's own
     # candidate diff, changed-file list, break-check outcome); it never touches
     # near_repo/production directly, and it can fail over to a fully deterministic
     # title/body with no effect on whether the sync itself succeeds.
@@ -160,20 +160,19 @@ def run_direction(
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
     # Reword the commit (still local, not yet pushed) from the mechanical placeholder
     # above to the same title just generated for the PR -- same safe, far-side-only
-    # source, not a reopening of v7's leak. See design-history.md's v14 note. The
-    # mechanical "sync: <key> @ <sha>" trailer that used to follow it is gone -- see
-    # design-history.md's v19 note: it read as pipeline residue in the commit
-    # history, and the sha it carried is recoverable from record_synced's tracking
-    # ref if ever needed (see design-history.md's v20 note), not just this trailer.
+    # source used to build the PR body, never the raw production commit message.
+    # No mechanical "sync: <key> @ <sha>" trailer is appended: it would just be
+    # pipeline residue in the commit history, and the sha it would carry is
+    # recoverable from record_synced's tracking ref (see below) if ever needed.
     publish.reword_commit(far_repo, message=title)
     # Swap the temporary sha-only working name for a clean, human-readable one
     # derived from the same title, reusing it rather than a separate LLM call.
-    # Idempotency no longer depends on this name (see already_synced above), so it
+    # Idempotency doesn't depend on this name (see already_synced above), so it
     # carries no sha at all -- except in the rare case another branch already has
     # this exact slug (a real name collision, not a re-run of the same commit,
     # which already_synced would have caught above), where a short sha suffix
     # disambiguates rather than failing the push outright. Still local, still
-    # unpushed. See design-history.md's v20 note.
+    # unpushed.
     branch = publish.slugify(title)
     if publish.branch_exists(far_repo, branch):
         branch = f"{branch}-{head_sha[:7]}"
@@ -234,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         # _EMAIL (set directly in the workflow) always wins over this derived default.
         # publish.py reads these lazily, so setting them here (after config is loaded,
         # before any commit happens) takes effect even though publish was already
-        # imported. See design-history.md's v17 note.
+        # imported.
         if config.project_name:
             slug = config.project_name.lower().replace(" ", "-")
             os.environ.setdefault("SYNC_SERVICE_COMMIT_NAME", f"{config.project_name} Sync Bot")
@@ -282,9 +281,8 @@ def main(argv: list[str] | None = None) -> int:
         # A halt the tool performed correctly (secret/breakcheck/safety-review-halt)
         # is still exit 0 -- that's policy working as intended. A publish failure or
         # a safety review that couldn't even run (misconfigured key, API error,
-        # content too large) is a real problem with this run and must not be
-        # silently reported as success -- see design-history.md's v9/v12 notes for
-        # why each of those distinctions exists.
+        # content too large) is a real problem with this run, distinct from a
+        # correctly-enforced halt, and must not be silently reported as success.
         if "publish-failed" in outcomes or "safety-review-error" in outcomes:
             return 1
         return 0

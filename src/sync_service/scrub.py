@@ -1,4 +1,4 @@
-"""Scrub list — design.md §2. Exclude list + regex substitution. Mechanical, no AI judgment.
+"""Scrub: exclude list + regex substitution. Mechanical, no AI judgment.
 
 Direction-agnostic: forward (production -> OSS) applies `redact` walking `mapping.source`
 into `mapping.dest`; reverse (OSS -> production) applies `hydrate` walking `mapping.dest`

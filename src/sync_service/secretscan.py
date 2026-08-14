@@ -1,4 +1,4 @@
-"""Secret scan — design.md §2, hard gate. A hit stops the run; no PR, no auto-redaction attempt.
+"""Secret scan: a hard gate over the scrubbed content. A hit stops the run; no PR, no auto-redaction attempt.
 
 This is a small built-in scanner for the demo only. Production deployment should
 run `gitleaks` over the same desired-tree contents instead — see DEPLOY.md.

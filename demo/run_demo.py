@@ -5,9 +5,10 @@ Walks through:
   STEP 1 — first sync, two mappings at once (forward)
   STEP 2 — secret scan halt (forward)
   STEP 3 — an outside OSS edit gets silently overwritten by the next forward sync.
-           There's no manifest / conflict tracking anymore: a run always overwrites
-           the far side's tracked files with the near side's current content. This
-           is the deliberate tradeoff of removing state — see design-history.md's v5 note.
+           There's no manifest / conflict tracking: a run always overwrites the far
+           side's tracked files with the near side's current content. That's the
+           deliberate tradeoff of not tracking sync state at all -- simpler, at the
+           cost of ever detecting an outside edit before clobbering it.
   STEP 4 — break check failure (forward), working tree reverted
   STEP 4b — bug fixed, forward sync succeeds on retry
   STEP 5 — no-op (touched file isn't under any mapping)
@@ -39,11 +40,10 @@ _BRANCH_RE = re.compile(r"Would open PR (\S+) ->")
 
 class _Tee:
     """Writes to the real stdout (so the demo still narrates live) while also
-    capturing into a buffer this script parses -- branch names are no longer
-    predictable from outside (a title-derived slug, occasionally disambiguated with
-    a sha suffix on a rare same-title collision, see design-history.md's v20 note),
-    so this reads them back from what cli.main() actually printed instead of
-    guessing at the naming scheme."""
+    capturing into a buffer this script parses -- branch names aren't predictable
+    from outside (a title-derived slug, occasionally disambiguated with a sha suffix
+    on a rare same-title collision), so this reads them back from what cli.main()
+    actually printed instead of guessing at the naming scheme."""
 
     def __init__(self, *streams):
         self.streams = streams
@@ -248,7 +248,7 @@ def main() -> None:
     print("brk/mod.py on oss main still has the old, working version:",
           "boom" not in (oss / "brk" / "mod.py").read_text())
 
-    # ---- sha4b: human fixes the bug and retries — design.md §3's retry path ----
+    # ---- sha4b: human fixes the bug and retries ----
     # Deliberately not identical to the pre-bug content, so this actually has something
     # to commit — see test_publish.py for the "genuinely nothing changed" case instead.
     fixed_brk = "def run():\n    print('brk ok, fixed')\n\nif __name__ == '__main__':\n    run()\n"

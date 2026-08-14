@@ -1,4 +1,4 @@
-"""Mapping config schema — architecture.md §3.
+"""Mapping config schema.
 
 Loads and validates a repo pair's sync/*.yaml. Fails fast on load
 (bad regex, overlapping dest paths) rather than mid-run.

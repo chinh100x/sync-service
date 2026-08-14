@@ -189,11 +189,10 @@ def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
 
 
 def test_idempotent_rerun_is_recognized_via_the_sync_ref_not_the_branch_name(tmp_path, capsys):
-    # The branch name alone can no longer answer "has this (mapping, head_sha)
-    # already been proposed" -- it's a clean title-derived slug with no sha in it
-    # (see design-history.md's v20 note). This exercises the replacement mechanism
-    # (publish.already_synced/record_synced) end to end through cli.main(), not just
-    # at the publish.py unit level.
+    # The branch name alone can't answer "has this (mapping, head_sha) already been
+    # proposed" -- it's a clean title-derived slug with no sha in it. This exercises
+    # the replacement mechanism (publish.already_synced/record_synced) end to end
+    # through cli.main(), not just at the publish.py unit level.
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()

@@ -1,4 +1,5 @@
-"""Trigger — design.md §1. Which mappings did base..head touch?"""
+"""Trigger: which mappings did base..head touch, and what does the resulting
+far-side diff/commit metadata look like?"""
 from __future__ import annotations
 
 import subprocess
@@ -22,9 +23,9 @@ def changed_files(repo_path: str | Path, base: str, head: str) -> list[str]:
 def commit_author(repo_path: str | Path, sha: str) -> str:
     """`<name> <email>` for the near-side commit at `sha`, as recorded in that repo's
     own history -- the actual author of this change, for crediting on the far-side
-    commit (see design-history.md's v19 note). Reads only name/email metadata, never
-    the commit message/diff/tree, so this can't leak anything scrub/secretscan is
-    responsible for scrubbing."""
+    commit's Author field (see publish.commit_to_branch's `author` param). Reads
+    only name/email metadata, never the commit message/diff/tree, so this can't leak
+    anything scrub/secretscan is responsible for scrubbing."""
     out = subprocess.run(
         ["git", "show", "-s", "--format=%an <%ae>", sha],
         cwd=repo_path,

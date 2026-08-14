@@ -1,7 +1,7 @@
 """Semantic safety review — an optional, advisory LLM gate for the one category of
 leak `scrub`/`secretscan` structurally can't catch: business-context prose (a real
 customer name, an internal deal reference, proprietary logic described in a comment)
-that doesn't match any regex pattern. See design.md/architecture.md's v12 note.
+that doesn't match any regex pattern.
 
 This is NOT `pr_writer.py`. Where the PR writer is cosmetic and fails *open* (any
 error → fall back to a plain deterministic PR, sync still succeeds), this is a

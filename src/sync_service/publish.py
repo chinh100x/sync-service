@@ -1,5 +1,6 @@
-"""Publish — design.md §3 pass path. One branch/commit per mapping; PR opened via `gh`
-when available, otherwise the PR body is printed (dry-run, e.g. this demo)."""
+"""Publish: commit the scrubbed content to a new branch, then open a PR for it. One
+branch/commit per mapping; PR opened via `gh` when a remote is configured, otherwise
+the PR body is printed instead (dry-run, e.g. this demo)."""
 from __future__ import annotations
 
 import base64
@@ -36,10 +37,9 @@ def branch_name(namespace: str, head_sha: str) -> str:
     real branch to diff against, before that title exists. cli.py renames it to a
     clean, human-readable, title-derived name (see rename_branch) once the title is
     known, before anything is pushed -- this sha-only name is never itself pushed or
-    visible anywhere. Idempotency no longer depends on this name at all -- see
-    already_synced/record_synced, which track (mapping, head_sha) via a dedicated ref
-    instead, so the final branch name is free to carry no sha at all. See
-    design-history.md's v20 note."""
+    visible anywhere. Idempotency doesn't depend on this name at all -- see
+    already_synced/record_synced below, which track (mapping, head_sha) via a
+    dedicated ref instead, so the final branch name is free to carry no sha at all."""
     return f"{namespace}/{head_sha[:7]}"
 
 
@@ -50,9 +50,8 @@ def _sync_ref(mapping_key: str, head_sha: str) -> str:
 def already_synced(dest_repo: Path, mapping_key: str, head_sha: str) -> bool:
     """Whether this (mapping, head_sha) has already been proposed. Checked via a
     dedicated, non-branch ref recorded by record_synced on a prior successful run --
-    not the PR branch's own name, which is now a plain, readable slug with no sha in
-    it (see design-history.md's v20 note) and so can no longer double as the
-    idempotency key the way the old sha-prefixed name did."""
+    not the PR branch's own name, which is a plain, readable slug with no sha in it
+    and so can't double as the idempotency key the way a sha-prefixed name would."""
     ref = _sync_ref(mapping_key, head_sha)
     local = subprocess.run(["git", "show-ref", "--verify", "--quiet", ref], cwd=dest_repo)
     if local.returncode == 0:
@@ -142,8 +141,7 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
     `author` (a "<name> <email>" string), when given, credits the actual near-side
     committer via git's Author field, distinct from the Committer field (still
     `_git_id()`, the bot identity) -- git itself already keeps these separate, this
-    just uses that instead of collapsing both to the bot. See design-history.md's
-    v19 note.
+    just uses that instead of collapsing both onto the bot.
 
     Returns False (no branch left behind) if there was nothing to commit — the
     propagated content was already byte-identical to what's on the far side. With
@@ -168,10 +166,11 @@ def reword_commit(dest_repo: Path, message: str) -> None:
     """Rewrites the message of the commit `commit_to_branch` just made, before it's
     ever pushed -- amending a not-yet-pushed local commit is ordinary git, not a
     rewrite of shared history. Used to swap the mechanical placeholder message for
-    pr_writer.py's already-generated, already-safe title (see design-history.md's
-    v14 note) -- this is NOT a reopening of v7's leak: the replacement text comes
-    from the same far-side-only, already-scrubbed context the PR body already uses,
-    never from anything production-side."""
+    pr_writer.py's already-generated title. Safe to do because that title is built
+    only from far-side, already-scrubbed context (the same `PRContext` the PR body
+    itself uses) -- never from the raw production commit message, which must never
+    reach the far side verbatim (it's free-form human text that never goes through
+    scrub/secretscan)."""
     subprocess.run(["git", *_git_id(), "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
 
 

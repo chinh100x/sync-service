@@ -1,4 +1,4 @@
-"""Notify — architecture.md §7 failure matrix. Every halt/error is a comment on the
+"""Notify: every halt/error from run_direction is routed here. Prints a comment on the
 source commit, via the production repo's own read-only GITHUB_TOKEN (no extra
 permission needed), and -- if SLACK_WEBHOOK_URL is configured -- the same message
 posted to Slack too (see slack.py). Neither is required: Slack posting is
