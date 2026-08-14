@@ -21,6 +21,35 @@ def test_comment_on_commit_still_returns_normally_if_slack_post_fails(monkeypatc
     assert "body text" in result  # slack failing never raises or changes the return
 
 
+def test_comment_on_commit_links_the_sha_when_github_repository_is_set(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "chinh100x/prod")
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    result = notify.comment_on_commit("e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted")
+
+    url = "https://github.com/chinh100x/prod/commit/e3369bc4f775216af1ccc45d2c1aa8098d5164b0"
+    # Printed/returned: a bare URL -- GitHub Actions' own log viewer auto-linkifies
+    # this, but would show mrkdwn's <...|...> brackets as literal text instead.
+    assert url in result
+    assert "<" not in result
+    printed = capsys.readouterr().out
+    assert url in printed
+    # Slack: the same URL, but as a short, readable link via its own <url|text>
+    # mrkdwn syntax rather than a full URL sitting in the message body.
+    assert f"<{url}|e3369bc4f775>" in captured[0]
+
+
+def test_comment_on_commit_falls_back_to_a_bare_sha_without_github_repository(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.setattr(notify.slack, "post", lambda text: True)
+
+    result = notify.comment_on_commit("abc123def456789", "something halted")
+
+    assert "abc123def456" in result
+    assert "https://" not in result  # nothing to link to locally/in tests
+
+
 def test_pr_opened_posts_a_slack_link_using_the_title_as_link_text(monkeypatch, capsys):
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
