@@ -78,6 +78,56 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
     assert "RockyMountain" not in far_side_message
 
 
+def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_string(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    cli.main(
+        [
+            "run",
+            "--config", str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo", str(prod),
+            "--dest-repo", str(oss),
+            "--base", base,
+            "--head", head,
+        ]
+    )
+
+    branch = f"sync/portmon/{head[:12]}"
+    subject = _git(oss, "log", "-1", "--pretty=%s", branch).stdout.strip()
+    full_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
+
+    # No LLM enabled here -- DeterministicPRWriter's title, not the old mechanical
+    # "sync: portmon @ <sha>" subject line.
+    assert subject == "Sync portmon changes"
+    # The mechanical identifier is preserved, just moved out of the subject line --
+    # traceability isn't lost, only no longer the first thing anyone reads.
+    assert f"sync: portmon @ {head[:12]}" in full_message
+
+
 def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path, monkeypatch):
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"

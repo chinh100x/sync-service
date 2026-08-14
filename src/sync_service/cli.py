@@ -141,6 +141,10 @@ def run_direction(
         source_sha=head_sha[:12],
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
+    # Reword the commit (still local, not yet pushed) from the mechanical placeholder
+    # above to the same title just generated for the PR -- same safe, far-side-only
+    # source, not a reopening of v7's leak. See design-history.md's v14 note.
+    publish.reword_commit(far_repo, message=f"{title}\n\n{commit_message}")
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
     if not result.success:

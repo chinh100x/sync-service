@@ -80,6 +80,17 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
     return True
 
 
+def reword_commit(dest_repo: Path, message: str) -> None:
+    """Rewrites the message of the commit `commit_to_branch` just made, before it's
+    ever pushed -- amending a not-yet-pushed local commit is ordinary git, not a
+    rewrite of shared history. Used to swap the mechanical placeholder message for
+    pr_writer.py's already-generated, already-safe title (see design-history.md's
+    v14 note) -- this is NOT a reopening of v7's leak: the replacement text comes
+    from the same far-side-only, already-scrubbed context the PR body already uses,
+    never from anything production-side."""
+    subprocess.run(["git", *_GIT_ID, "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+
+
 def discard_working_tree_changes(dest_repo: Path) -> None:
     subprocess.run(["git", "checkout", "--", "."], cwd=dest_repo, capture_output=True)
     subprocess.run(["git", "clean", "-fd"], cwd=dest_repo, capture_output=True)

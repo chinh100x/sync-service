@@ -83,6 +83,29 @@ def test_branch_exists_checks_the_remote_too(tmp_path):
     assert publish.branch_exists(fresh, "sync/x/does-not-exist") is False
 
 
+def test_reword_commit_changes_message_without_touching_the_tree(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("changed\n")
+    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
+
+    tree_before = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+    publish.reword_commit(repo, "Sync x changes\n\nsync: x @ abc123")
+
+    message = subprocess.run(
+        ["git", "log", "-1", "--pretty=%B"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+    tree_after = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+    assert message.strip() == "Sync x changes\n\nsync: x @ abc123"
+    assert tree_after == tree_before  # amending the message never touches the actual content
+
+
 def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):
     # A remote being configured means a real publish was intended -- if `gh` isn't
     # available to do it, that must surface as a failure, never a silent dry-run
