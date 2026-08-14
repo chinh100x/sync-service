@@ -63,8 +63,8 @@ picking the right installation token) works fine too.
 
 Before touching the real monitoring or 100xtools repos, create two scratch
 GitHub repos (e.g. `you/sync-service-test-prod`, `you/sync-service-test-oss`)
-and run the CLI against them locally, the same way `demo/run_demo.py` does
-but with real `git remote`s instead of none:
+and run the CLI against them locally, the same way `tests/integration/`
+does but with real `git remote`s instead of none:
 
 ```bash
 git clone https://github.com/you/sync-service-test-prod prod
@@ -85,7 +85,7 @@ OSS repo before moving on.
 ## 3. Where the mapping config lives
 
 The CLI itself still takes `--config <path-to-a-file>` — that's what §2's
-manual run, `demo/run_demo.py`, and the test suite all use, and a standalone
+manual run and the test suite both use, and a standalone
 `sync/<name>.yaml` file (see `design.md`/architecture.md §3 for the schema)
 next to the code it maps is a perfectly good way to keep one for local use or
 version-control history.
@@ -337,7 +337,7 @@ the existing halt/error outcomes.
 ## 10. Roll out in build order
 
 1. Confirm the throwaway-repo-pair run in step 2 works for every scenario
-   `demo/run_demo.py` exercises locally: a clean forward sync, a rejected PR
+   `tests/integration/` exercises locally: a clean forward sync, a rejected PR
    (secret scan hit), an outside far-side edit getting silently overwritten
    by the next sync (know this is expected — see design-history.md's v5 note, not a
    bug to chase), a break check failure with a working-tree revert, and —
