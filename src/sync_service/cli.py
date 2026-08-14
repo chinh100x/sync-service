@@ -121,11 +121,16 @@ def run_direction(
         print(f"[{label}:{mapping.key}] no break check configured for this direction — relying on the far repo's own CI")
 
     # Deliberately not the production commit message. It's free-form human text that
-    # never goes through scrub/secretscan — see design-history.md's v7 note. The SHA alone is
-    # safe to expose (it's just a hash) and is enough to correlate back to the source
-    # commit for anyone who already has access to that repo.
+    # never goes through scrub/secretscan — see design-history.md's v7 note. Only a
+    # transient placeholder: reword_commit below replaces it with the generated title
+    # before anything is pushed, so this text is never actually visible anywhere.
     commit_message = f"sync: {mapping.key} @ {head_sha[:12]}"
-    committed = publish.commit_to_branch(far_repo, branch, message=commit_message)
+    # Credits the actual near-side committer as this commit's Author -- the
+    # Committer field (_git_id(), the bot identity) stays separate, so the pipeline's
+    # involvement is still visible even though the byline now names a real person.
+    # See design-history.md's v19 note.
+    author = diff.commit_author(near_repo, head_sha)
+    committed = publish.commit_to_branch(far_repo, branch, message=commit_message, author=author)
     if not committed:
         print(f"[{label}:{mapping.key}] nothing changed vs the far side — no PR")
         return "unchanged"
@@ -151,8 +156,11 @@ def run_direction(
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
     # Reword the commit (still local, not yet pushed) from the mechanical placeholder
     # above to the same title just generated for the PR -- same safe, far-side-only
-    # source, not a reopening of v7's leak. See design-history.md's v14 note.
-    publish.reword_commit(far_repo, message=f"{title}\n\n{commit_message}")
+    # source, not a reopening of v7's leak. See design-history.md's v14 note. The
+    # mechanical "sync: <key> @ <sha>" trailer that used to follow it is gone -- see
+    # design-history.md's v19 note: it duplicated the branch name (which already
+    # carries the sha) and read as pipeline residue in the commit history.
+    publish.reword_commit(far_repo, message=title)
     # Swap the temporary sha-only working name for a human-readable one derived from
     # the same title, reusing it rather than a separate LLM call -- the sha prefix
     # stays as a suffix so two different commits with similarly-worded titles can

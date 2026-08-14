@@ -83,6 +83,40 @@ def test_branch_exists_checks_the_remote_too(tmp_path):
     assert publish.branch_exists(fresh, "sync/x/does-not-exist") is False
 
 
+def test_commit_to_branch_credits_the_given_author_but_keeps_the_bot_as_committer(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("changed\n")
+
+    publish.commit_to_branch(repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>")
+
+    author = subprocess.run(
+        ["git", "log", "-1", "--pretty=%an <%ae>"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    committer = subprocess.run(
+        ["git", "log", "-1", "--pretty=%cn <%ce>"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    assert author == "Jane Dev <jane@example.com>"
+    # _git_id()'s default bot identity -- author= only overrides the Author field,
+    # commit_to_branch's own -c user.name/user.email (the Committer) is untouched.
+    assert committer == "sync-service[bot] <sync-service@users.noreply.github.com>"
+
+
+def test_reword_commit_preserves_the_original_author(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("changed\n")
+    publish.commit_to_branch(repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>")
+
+    publish.reword_commit(repo, "Sync x changes")
+
+    author = subprocess.run(
+        ["git", "log", "-1", "--pretty=%an <%ae>"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert author == "Jane Dev <jane@example.com>"  # --amend without --author keeps it
+
+
 def test_reword_commit_changes_message_without_touching_the_tree(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)

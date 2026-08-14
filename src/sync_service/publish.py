@@ -116,9 +116,15 @@ def branch_exists_with_prefix(dest_repo: Path, prefix: str) -> bool:
     return bool(remote.stdout.strip())
 
 
-def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
+def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | None = None) -> bool:
     """Assumes dest_repo's working tree already has base_branch checked out with the
     scrubbed changes pending (uncommitted). Moves them onto a new branch.
+
+    `author` (a "<name> <email>" string), when given, credits the actual near-side
+    committer via git's Author field, distinct from the Committer field (still
+    `_git_id()`, the bot identity) -- git itself already keeps these separate, this
+    just uses that instead of collapsing both to the bot. See design-history.md's
+    v19 note.
 
     Returns False (no branch left behind) if there was nothing to commit — the
     propagated content was already byte-identical to what's on the far side. With
@@ -132,7 +138,10 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str) -> bool:
         subprocess.run(["git", *_git_id(), "branch", "-D", branch], cwd=dest_repo, check=True, capture_output=True)
         return False
 
-    subprocess.run(["git", *_git_id(), "commit", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+    commit_cmd = ["git", *_git_id(), "commit", "-m", message]
+    if author:
+        commit_cmd += ["--author", author]
+    subprocess.run(commit_cmd, cwd=dest_repo, check=True, capture_output=True)
     return True
 
 

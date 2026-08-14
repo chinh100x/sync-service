@@ -19,6 +19,22 @@ def changed_files(repo_path: str | Path, base: str, head: str) -> list[str]:
     return [line for line in out.stdout.splitlines() if line]
 
 
+def commit_author(repo_path: str | Path, sha: str) -> str:
+    """`<name> <email>` for the near-side commit at `sha`, as recorded in that repo's
+    own history -- the actual author of this change, for crediting on the far-side
+    commit (see design-history.md's v19 note). Reads only name/email metadata, never
+    the commit message/diff/tree, so this can't leak anything scrub/secretscan is
+    responsible for scrubbing."""
+    out = subprocess.run(
+        ["git", "show", "-s", "--format=%an <%ae>", sha],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
 def candidate_diff(far_repo: str | Path, base_branch: str, branch: str) -> str:
     """Unified diff of the OSS candidate actually committed -- `git diff` entirely
     within far_repo's own history (base_branch vs. the just-created sync branch).

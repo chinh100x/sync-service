@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 from sync_service import cli, notify
@@ -125,9 +126,66 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
     # No LLM enabled here -- DeterministicPRWriter's title, not the old mechanical
     # "sync: portmon @ <sha>" subject line.
     assert subject == "Sync portmon changes"
-    # The mechanical identifier is preserved, just moved out of the subject line --
-    # traceability isn't lost, only no longer the first thing anyone reads.
-    assert f"sync: portmon @ {head[:12]}" in full_message
+    # The mechanical "sync: <key> @ <sha>" trailer is gone entirely (v19) -- the
+    # commit message is just the title, full stop; the sha still lives in the
+    # branch name itself.
+    assert full_message.strip() == "Sync portmon changes"
+    assert "sync: portmon @" not in full_message
+
+
+def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    # A real developer identity, distinct from the fixture-wide GIT_ID -- this is
+    # the identity that should end up crediting the far-side commit's Author.
+    _git(prod, "add", "-A")
+    subprocess.run(
+        ["git", "-c", "user.name=Jane Dev", "-c", "user.email=jane@example.com", "commit", "-m", "change"],
+        cwd=prod, capture_output=True, text=True, check=True,
+    )
+    head = _rev(prod)
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    cli.main(
+        [
+            "run",
+            "--config", str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo", str(prod),
+            "--dest-repo", str(oss),
+            "--base", base,
+            "--head", head,
+        ]
+    )
+
+    branch = f"sync/portmon/{head[:7]}-sync-portmon-changes"
+    author = _git(oss, "log", "-1", "--pretty=%an <%ae>", branch).stdout.strip()
+    committer = _git(oss, "log", "-1", "--pretty=%cn <%ce>", branch).stdout.strip()
+
+    assert author == "Jane Dev <jane@example.com>"
+    # Committer stays the bot identity -- the pipeline's involvement is still
+    # visible even though the byline now names the real committer.
+    assert committer == "sync-service[bot] <sync-service@users.noreply.github.com>"
 
 
 def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path, monkeypatch):
@@ -271,6 +329,14 @@ def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monk
             "--head", head,
         ]
     )
+
+    # cli.main() does os.environ.setdefault(...) for the commit identity -- unlike
+    # monkeypatch.setenv, that mutation happens *during* the test body, after
+    # monkeypatch has already taken its "current value" snapshot, so monkeypatch's
+    # own teardown has nothing to revert here. Clean up directly so this doesn't
+    # leak "Prod Sync Bot" into every later test's commit identity in this process.
+    os.environ.pop("SYNC_SERVICE_COMMIT_NAME", None)
+    os.environ.pop("SYNC_SERVICE_COMMIT_EMAIL", None)
 
     assert exit_code == 0
     assert len(slack_messages) == 1
