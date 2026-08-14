@@ -90,9 +90,12 @@ def run_mapping(
     if mapping.break_check is not None:
         check = breakcheck.run(dest_repo, mapping.break_check)
         if not check.passed:
+            # Fenced so the raw command output renders as a code block, not a wall
+            # of plain text -- both GitHub (Markdown) and Slack (mrkdwn) use the
+            # same ``` syntax, so one format serves both channels.
             notify.comment_on_commit(
                 head_sha,
-                f"[{project_label}] {mapping.key}: break check failed at `{check.failed_step}`:\n{check.output}",
+                f"[{project_label}] {mapping.key}: break check failed at `{check.failed_step}`:\n```\n{check.output}\n```",
             )
             publish.discard_working_tree_changes(dest_repo)
             return "breakcheck-halt"

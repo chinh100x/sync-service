@@ -166,6 +166,7 @@ def test_breakcheck_failure_halts_reverts_and_succeeds_on_retry(tmp_path, capsys
 
     assert exit_code == 0  # a correctly-enforced halt, not a tool failure
     assert "break check failed" in printed
+    assert "```\n" in printed  # raw command output fenced, not dumped as plain text
     assert _BRANCH_RE.findall(printed) == []  # no PR opened
     assert _git(oss, "status", "--porcelain").stdout == ""  # working tree reverted, nothing left dangling
 
