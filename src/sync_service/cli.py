@@ -39,8 +39,14 @@ def run_direction(
     gh_token: str | None,
     llm_pr_enabled: bool,
     llm_safety_review_enabled: bool,
+    project_name: str | None,
 ) -> str:
     """near = the side whose commit triggered this run; far = the side we're proposing to."""
+    # Human-readable prefix for every Slack-bound notification below (secret/break-
+    # check/safety-review halts, publish failures, PR-opened) -- falls back to the
+    # old mechanical `label:mapping_key` format when the config doesn't set
+    # project_name, so existing demo/test configs see no behavior change.
+    project_label = project_name or f"{label}:{mapping.key}"
     # Reset far_repo to base_branch before touching it. Without this, a prior mapping
     # processed in the same run (or a prior breakcheck-halt) can leave far_repo checked
     # out on *its own* branch — nesting this mapping's commit inside that one's PR
@@ -62,7 +68,7 @@ def run_direction(
     if hits:
         notify.comment_on_commit(
             head_sha,
-            f"[{label}] secret scan hit in {mapping.key}: {hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
+            f"[{project_label}] secret scan hit in {mapping.key}: {hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
         )
         return "secret-halt"
 
@@ -81,7 +87,7 @@ def run_direction(
     except safety_review.SafetyReviewUnavailable as exc:
         notify.comment_on_commit(
             head_sha,
-            f"[{label}] {mapping.key}: semantic safety review unavailable ({exc}) -- halted out of caution, no PR.",
+            f"[{project_label}] {mapping.key}: semantic safety review unavailable ({exc}) -- halted out of caution, no PR.",
         )
         return "safety-review-error"
 
@@ -89,7 +95,7 @@ def run_direction(
         categories = f" (categories: {', '.join(verdict.categories)})" if verdict.categories else ""
         notify.comment_on_commit(
             head_sha,
-            f"[{label}] {mapping.key}: semantic safety review blocked this change: {verdict.summary}{categories}. Halted, no PR.",
+            f"[{project_label}] {mapping.key}: semantic safety review blocked this change: {verdict.summary}{categories}. Halted, no PR.",
         )
         return "safety-review-halt"
 
@@ -103,7 +109,7 @@ def run_direction(
         if not check.passed:
             notify.comment_on_commit(
                 head_sha,
-                f"[{label}] {mapping.key}: break check failed at `{check.failed_step}`:\n{check.output}",
+                f"[{project_label}] {mapping.key}: break check failed at `{check.failed_step}`:\n{check.output}",
             )
             publish.discard_working_tree_changes(far_repo)
             return "breakcheck-halt"
@@ -154,10 +160,10 @@ def run_direction(
         # other halt/error, Slack included.
         notify.comment_on_commit(
             head_sha,
-            f"[{label}] {mapping.key}: publish failed -- {result.message}",
+            f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
         )
         return "publish-failed"
-    notify.pr_opened(label, mapping.key, title, result.message)
+    notify.pr_opened(project_label, title, result.message)
     return "opened"
 
 
@@ -217,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
                     branch_prefix="sync", label="sync", gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,
+                    project_name=config.project_name,
                 )
             else:
                 outcome = run_direction(
@@ -227,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                     branch_prefix="reverse-sync", label="reverse-sync", gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,
+                    project_name=config.project_name,
                 )
             outcomes.append(outcome)
 

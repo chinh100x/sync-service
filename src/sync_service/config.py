@@ -89,6 +89,12 @@ class SyncConfig(BaseModel):
     mappings: list[Mapping]
     llm_pr: LLMPRConfig = LLMPRConfig()
     llm_safety_review: SafetyReviewConfig = SafetyReviewConfig()
+    # Human-readable label for this deployment (e.g. "Prod"), used only in
+    # Slack-bound notifications -- swaps the mechanical `[sync:app]`-style prefix
+    # for something a channel of humans can actually read at a glance. Optional:
+    # unset means each notification falls back to the old mechanical
+    # `label:mapping_key` prefix (see cli.py's run_direction).
+    project_name: str | None = None
 
     @model_validator(mode="after")
     def _non_overlapping_dest(self) -> Self:

@@ -225,3 +225,55 @@ def test_successful_pr_notifies_slack(tmp_path, monkeypatch):
     assert len(slack_messages) == 1
     assert "portmon" in slack_messages[0]
     assert "PR opened" in slack_messages[0]
+
+
+def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monkeypatch):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n'
+        "project_name: Prod\n",
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+    # No remote configured -- the dry-run success path, same as the demo.
+
+    slack_messages = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: slack_messages.append(text) or True)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--config", str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo", str(prod),
+            "--dest-repo", str(oss),
+            "--base", base,
+            "--head", head,
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(slack_messages) == 1
+    # "Prod" replaces the mechanical "sync:portmon" prefix entirely -- matches the
+    # requested "[Prod] PR opened: ..." format, not "[Prod:portmon] ..." (dry-run
+    # here since no remote is configured, same as the demo).
+    assert slack_messages[0].startswith("[Prod] PR opened (dry-run):")
+    assert "sync:portmon" not in slack_messages[0]
