@@ -53,14 +53,18 @@ def run_direction(
     # instead of both branching independently off base_branch. See design-history.md's v8 note.
     publish.checkout_base(far_repo, base_branch)
 
-    # The final branch name gets a human-readable slug appended once the PR title is
-    # known (see the rename_branch call below) -- but that title doesn't exist yet at
-    # this point in the pipeline, so idempotency has to key off this sha-only prefix
-    # alone rather than an exact name. See publish.branch_exists_with_prefix.
-    branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
-    if publish.branch_exists_with_prefix(far_repo, branch):
+    # Tracked via a dedicated ref, not the branch name -- the final branch name is a
+    # clean, title-derived slug with no sha in it (see the rename_branch call below),
+    # so it can no longer double as the (mapping, head_sha) idempotency key the way
+    # an earlier version's sha-prefixed name did. See design-history.md's v20 note.
+    if publish.already_synced(far_repo, mapping.key, head_sha):
         print(f"[{label}:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
         return "skipped-exists"
+
+    # Purely a temporary working name -- diff.candidate_diff() below needs a real
+    # commit on a real branch before the title (and therefore the final branch name)
+    # can be generated. Renamed before anything is pushed; never itself visible.
+    branch = publish.branch_name(f"{branch_prefix}/{mapping.key}", head_sha)
 
     desired, scrubbed_categories = scrub.apply(near_repo, near_path, far_path, near_exclude, near_rules)
     if not desired:
@@ -158,16 +162,21 @@ def run_direction(
     # above to the same title just generated for the PR -- same safe, far-side-only
     # source, not a reopening of v7's leak. See design-history.md's v14 note. The
     # mechanical "sync: <key> @ <sha>" trailer that used to follow it is gone -- see
-    # design-history.md's v19 note: it duplicated the branch name (which already
-    # carries the sha) and read as pipeline residue in the commit history.
+    # design-history.md's v19 note: it read as pipeline residue in the commit
+    # history, and the sha it carried is recoverable from record_synced's tracking
+    # ref if ever needed (see design-history.md's v20 note), not just this trailer.
     publish.reword_commit(far_repo, message=title)
-    # Swap the temporary sha-only working name for a human-readable one derived from
-    # the same title, reusing it rather than a separate LLM call -- the sha prefix
-    # stays as a suffix so two different commits with similarly-worded titles can
-    # never collide, and so branch_exists_with_prefix's earlier idempotency check
-    # still matches this branch on a later re-run. Still local, still unpushed.
-    # See design-history.md's v18 note.
-    branch = f"{branch}-{publish.slugify(title)}"
+    # Swap the temporary sha-only working name for a clean, human-readable one
+    # derived from the same title, reusing it rather than a separate LLM call.
+    # Idempotency no longer depends on this name (see already_synced above), so it
+    # carries no sha at all -- except in the rare case another branch already has
+    # this exact slug (a real name collision, not a re-run of the same commit,
+    # which already_synced would have caught above), where a short sha suffix
+    # disambiguates rather than failing the push outright. Still local, still
+    # unpushed. See design-history.md's v20 note.
+    branch = publish.slugify(title)
+    if publish.branch_exists(far_repo, branch):
+        branch = f"{branch}-{head_sha[:7]}"
     publish.rename_branch(far_repo, branch)
     result = publish.open_pr(far_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[{label}:{mapping.key}] {result.message}")
@@ -181,6 +190,9 @@ def run_direction(
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
         )
         return "publish-failed"
+    # Only mark (mapping, head_sha) as synced once the publish actually succeeded --
+    # a halt/failure must still be retried on the next run, not silently skipped.
+    publish.record_synced(far_repo, mapping.key, head_sha, token=gh_token)
     notify.pr_opened(project_label, title, result.message)
     return "opened"
 

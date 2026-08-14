@@ -31,14 +31,58 @@ def _git_id() -> list[str]:
 
 def branch_name(namespace: str, head_sha: str) -> str:
     """namespace is the full branch prefix, e.g. `sync/portmon` or `reverse-sync/portmon`.
-    This is the *temporary* working name used while committing -- cli.py renames it to
-    a human-readable, title-derived name (see rename_branch) once the PR title is known,
-    before anything is pushed. It also doubles as the idempotency prefix: the (mapping,
-    head_sha) identity a re-run needs to recognize is fully captured here, regardless of
-    what slug gets appended later -- see branch_exists_with_prefix. 7 chars -- git's own
-    default abbreviation length -- rather than 12: shorter, still practically unique for
-    a repo this size."""
+    This is only a *temporary* working name used while committing, needed because
+    diff.candidate_diff() (used to build the PR title) requires a real commit on a
+    real branch to diff against, before that title exists. cli.py renames it to a
+    clean, human-readable, title-derived name (see rename_branch) once the title is
+    known, before anything is pushed -- this sha-only name is never itself pushed or
+    visible anywhere. Idempotency no longer depends on this name at all -- see
+    already_synced/record_synced, which track (mapping, head_sha) via a dedicated ref
+    instead, so the final branch name is free to carry no sha at all. See
+    design-history.md's v20 note."""
     return f"{namespace}/{head_sha[:7]}"
+
+
+def _sync_ref(mapping_key: str, head_sha: str) -> str:
+    return f"refs/sync-service/{mapping_key}/{head_sha}"
+
+
+def already_synced(dest_repo: Path, mapping_key: str, head_sha: str) -> bool:
+    """Whether this (mapping, head_sha) has already been proposed. Checked via a
+    dedicated, non-branch ref recorded by record_synced on a prior successful run --
+    not the PR branch's own name, which is now a plain, readable slug with no sha in
+    it (see design-history.md's v20 note) and so can no longer double as the
+    idempotency key the way the old sha-prefixed name did."""
+    ref = _sync_ref(mapping_key, head_sha)
+    local = subprocess.run(["git", "show-ref", "--verify", "--quiet", ref], cwd=dest_repo)
+    if local.returncode == 0:
+        return True
+
+    remote = subprocess.run(["git", "ls-remote", "origin", ref], cwd=dest_repo, capture_output=True, text=True)
+    return bool(remote.stdout.strip())
+
+
+def record_synced(dest_repo: Path, mapping_key: str, head_sha: str, token: str | None = None) -> None:
+    """Marks (mapping, head_sha) as synced, for already_synced to find on a later
+    run -- call only after a real PR (or dry-run) actually succeeded, never on a
+    halt/failure, so a genuinely failed run still gets retried rather than silently
+    skipped forever. Best-effort on the remote push (mirrors the branch push in
+    open_pr): a real remote is required for this to mean anything past the current
+    checkout, but a failure here shouldn't fail the overall run -- worst case, a
+    future re-run just doesn't recognize this one and opens a redundant PR, not a
+    silent incorrect skip."""
+    ref = _sync_ref(mapping_key, head_sha)
+    subprocess.run(["git", "update-ref", ref, "HEAD"], cwd=dest_repo, check=True, capture_output=True)
+
+    has_remote = subprocess.run(["git", "remote"], cwd=dest_repo, capture_output=True, text=True).stdout.strip() != ""
+    if not has_remote:
+        return
+
+    push_cmd = ["git"]
+    if token:
+        push_cmd += ["-c", f"http.extraheader={_basic_auth_header(token)}"]
+    push_cmd += ["push", "origin", f"{ref}:{ref}"]
+    subprocess.run(push_cmd, cwd=dest_repo, capture_output=True, text=True)
 
 
 def slugify(text: str, max_length: int = 50) -> str:
@@ -89,31 +133,6 @@ def branch_exists(dest_repo: Path, branch: str) -> bool:
         text=True,
     )
     return remote.returncode == 0
-
-
-def branch_exists_with_prefix(dest_repo: Path, prefix: str) -> bool:
-    """Like branch_exists, but a glob-prefix match instead of an exact name -- needed
-    once branch names carry a title-derived slug that isn't known until after the
-    commit (and its generated title) already exist. `prefix` alone (e.g.
-    "sync/portmon/e184f69") is the full (mapping, head_sha) idempotency key; whatever
-    slug text a prior run appended after it is irrelevant to "has this already been
-    proposed."""
-    local = subprocess.run(
-        ["git", "branch", "--list", f"{prefix}*"],
-        cwd=dest_repo,
-        capture_output=True,
-        text=True,
-    )
-    if local.stdout.strip():
-        return True
-
-    remote = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", f"{prefix}*"],
-        cwd=dest_repo,
-        capture_output=True,
-        text=True,
-    )
-    return bool(remote.stdout.strip())
 
 
 def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | None = None) -> bool:

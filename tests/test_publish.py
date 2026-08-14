@@ -168,20 +168,29 @@ def test_rename_branch_swaps_the_current_branch_name(tmp_path):
     assert not publish.branch_exists(repo, "sync/x/abc123")
 
 
-def test_branch_exists_with_prefix_matches_regardless_of_slug_suffix(tmp_path):
+def test_already_synced_is_false_until_recorded(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "file.txt").write_text("changed\n")
     publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
-    publish.rename_branch(repo, "sync/x/abc123-fix-the-thing")
+    publish.rename_branch(repo, "some-clean-title-slug")
 
-    # An earlier run's idempotency check only knows the sha prefix -- the slug
-    # (derived from a title generated after that check runs) isn't known yet.
-    assert publish.branch_exists_with_prefix(repo, "sync/x/abc123")
-    assert not publish.branch_exists_with_prefix(repo, "sync/x/def456")
+    assert not publish.already_synced(repo, "x", "abc123def456")
+
+    publish.record_synced(repo, "x", "abc123def456")
+
+    # Keyed on (mapping_key, head_sha), not on the branch name at all -- the final
+    # branch name carries no sha for this to match against anymore.
+    assert publish.already_synced(repo, "x", "abc123def456")
+    assert not publish.already_synced(repo, "y", "abc123def456")  # different mapping
+    assert not publish.already_synced(repo, "x", "def456abc123")  # different sha
 
 
-def test_branch_exists_with_prefix_checks_the_remote_too(tmp_path):
+def test_record_synced_pushes_the_tracking_ref_when_a_remote_is_configured(tmp_path):
+    # A fresh Action-runner checkout only knows what a previous run pushed, not what
+    # a previous run recorded purely locally -- without pushing this ref too,
+    # idempotency would silently stop working the moment this runs on CI instead of
+    # a long-lived local clone. Mirrors branch_exists' own remote-check rationale.
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
 
@@ -189,14 +198,23 @@ def test_branch_exists_with_prefix_checks_the_remote_too(tmp_path):
     _init_repo(pusher)
     _git(pusher, "remote", "add", "origin", str(bare))
     _git(pusher, "push", "-q", "-u", "origin", "main")
-    _git(pusher, "checkout", "-b", "sync/x/aaaaaaa-fix-the-thing")
-    _git(pusher, "push", "-q", "-u", "origin", "sync/x/aaaaaaa-fix-the-thing")
+
+    publish.record_synced(pusher, "x", "abc123def456")
 
     fresh = tmp_path / "fresh"
     subprocess.run(["git", "clone", "-q", str(bare), str(fresh)], check=True)
 
-    assert publish.branch_exists_with_prefix(fresh, "sync/x/aaaaaaa") is True
-    assert publish.branch_exists_with_prefix(fresh, "sync/x/does-not-exist") is False
+    assert publish.already_synced(fresh, "x", "abc123def456") is True  # remote-only, not local
+    assert publish.already_synced(fresh, "x", "does-not-exist") is False
+
+
+def test_record_synced_is_local_only_without_a_remote(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    # No remote configured -- the dry-run scenario, same as the demo. Should not
+    # raise just because there's nothing to push to.
+    publish.record_synced(repo, "x", "abc123def456")
+    assert publish.already_synced(repo, "x", "abc123def456")
 
 
 def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):

@@ -19,6 +19,9 @@ Run with:  uv run python demo/run_demo.py
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,6 +33,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from sync_service import cli  # noqa: E402
 
 GIT_ID = ["-c", "user.name=demo", "-c", "user.email=demo@example.com"]
+
+_BRANCH_RE = re.compile(r"Would open PR (\S+) ->")
+
+
+class _Tee:
+    """Writes to the real stdout (so the demo still narrates live) while also
+    capturing into a buffer this script parses -- branch names are no longer
+    predictable from outside (a title-derived slug, occasionally disambiguated with
+    a sha suffix on a rare same-title collision, see design-history.md's v20 note),
+    so this reads them back from what cli.main() actually printed instead of
+    guessing at the naming scheme."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 
 def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -50,17 +75,6 @@ def commit(repo: Path, message: str) -> str:
     git(repo, "add", "-A")
     git(repo, "commit", "-m", message)
     return rev(repo)
-
-
-def find_branch(repo: Path, prefix: str) -> str:
-    """The final branch name carries a title-derived slug appended after the sha
-    prefix (see publish.rename_branch) -- not knowable in advance from here, so look
-    it up by prefix instead of assuming the old sha-only name."""
-    listed = git(repo, "branch", "--list", f"{prefix}*").stdout.strip().splitlines()
-    names = [line.strip().lstrip("* ") for line in listed]
-    if not names:
-        raise RuntimeError(f"no branch found matching {prefix}*")
-    return names[0]
 
 
 def header(title: str) -> None:
@@ -124,19 +138,25 @@ def main() -> None:
 
     config_path = prod / "sync" / "monitoring.yaml"
 
-    def run(base: str, head: str, label: str, direction: str = "forward") -> None:
+    def run(base: str, head: str, label: str, direction: str = "forward") -> list[str]:
+        """Returns the branch name(s) cli.main() actually opened a PR (or dry-run)
+        for, in print order -- read back from its own output rather than guessed,
+        since the final name isn't derivable from base/head/direction alone anymore."""
         header(label)
-        cli.main(
-            [
-                "run",
-                "--config", str(config_path),
-                "--source-repo", str(prod),
-                "--dest-repo", str(oss),
-                "--base", base,
-                "--head", head,
-                "--direction", direction,
-            ]
-        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(_Tee(sys.stdout, buf)):
+            cli.main(
+                [
+                    "run",
+                    "--config", str(config_path),
+                    "--source-repo", str(prod),
+                    "--dest-repo", str(oss),
+                    "--base", base,
+                    "--head", head,
+                    "--direction", direction,
+                ]
+            )
+        return _BRANCH_RE.findall(buf.getvalue())
 
     # ---- sha1: first real propagation, two mappings touched at once ----
     write(
@@ -154,13 +174,12 @@ def main() -> None:
     write(prod, "src/brk/mod.py", "def run():\n    print('brk ok')\n\nif __name__ == '__main__':\n    run()\n")
     sha1 = commit(prod, "portmon: add MCP reporting; brk: initial tool")
 
-    run(sha0, sha1, "STEP 1 — first sync: two mappings, both pass, PR opened (dry-run) for each")
+    branches = run(sha0, sha1, "STEP 1 — first sync: two mappings, both pass, PR opened (dry-run) for each")
 
     # simulate a human approving + merging both sync PRs into oss main
     git(oss, "checkout", "main")
-    for key in ("portmon", "brk"):
-        branch = find_branch(oss, f"sync/{key}/{sha1[:7]}")
-        git(oss, "merge", "--no-ff", branch, "-m", f"merge sync PR: {key}")
+    for branch in branches:
+        git(oss, "merge", "--no-ff", branch, "-m", f"merge sync PR: {branch}")
     print("(demo) merged both sync PRs into oss main, as if a human approved them")
 
     # ---- sha2: secret sneaks into covenant.py -> secret-halt ----
@@ -211,10 +230,10 @@ def main() -> None:
         """,
     )
     sha3 = commit(prod, "portmon: remove the API key, add audit()")
-    run(sha2, sha3, "STEP 3 — no state tracking anymore: this silently overwrites the outsider's edit")
+    branches = run(sha2, sha3, "STEP 3 — no state tracking anymore: this silently overwrites the outsider's edit")
 
-    print("\n-- what actually landed on the sync/portmon branch --")
-    portmon_branch = find_branch(oss, f"sync/portmon/{sha3[:7]}")
+    print("\n-- what actually landed on the portmon sync branch --")
+    portmon_branch = branches[0]
     merged_text = git(oss, "show", f"{portmon_branch}:plugin/covenant.py").stdout
     print("has the outsider's comment (it doesn't — overwritten):", "polled every 5 minutes" in merged_text)
     print("has prod's audit():", "def audit():" in merged_text)
@@ -255,10 +274,14 @@ def main() -> None:
     )
     commit(oss, "outside PR: note the status endpoint in brk/mod.py")
     oss_head = rev(oss)
-    run(oss_base, oss_head, "STEP 7 — OSS push triggers --direction reverse directly -> PR onto the production repo", direction="reverse")
+    reverse_branches = run(
+        oss_base, oss_head,
+        "STEP 7 — OSS push triggers --direction reverse directly -> PR onto the production repo",
+        direction="reverse",
+    )
 
     print("\n-- what the explicit reverse run proposed on the prod repo --")
-    reverse_brk_branch = find_branch(prod, f"reverse-sync/brk/{oss_head[:7]}")
+    reverse_brk_branch = reverse_branches[0]
     proposed_brk = git(prod, "show", f"{reverse_brk_branch}:src/brk/mod.py").stdout
     print(f"branch: {reverse_brk_branch}")
     print("hydrated (real endpoint, not the placeholder):",
