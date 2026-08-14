@@ -26,7 +26,7 @@ src/sync_service/
 ├── secretscan.py   built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
 ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
 ├── llm_client.py   shared OpenAI structured-output call used by pr_writer.py/safety_review.py
-├── pr_writer.py    optional LLM-written human-readable PR title/body. Off by default; deterministic fallback always available.
+├── pr_writer.py    LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
 ├── safety_review.py  optional LLM semantic safety review. Off by default; fails *closed* (halts) on any error — a security gate, not cosmetic.
 ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
 ├── notify.py       comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
@@ -138,19 +138,17 @@ Two things worth knowing about `base`/`head`:
 
 ### 4. Optional features
 
-All off by default — enable any combination by adding fields to the mapping config's `config:` block and passing the matching secret through as an input.
+Enable any combination by adding fields to the mapping config's `config:` block and passing the matching secret through as an input.
 
-**Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — advisory only, never part of the sync/security decision. Falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) on any failure or missing key.
+**Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, advisory only, never part of the sync/security decision. Falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) on any failure, timeout, or missing key — OpenAI is never a hard dependency of the sync itself.
 ```yaml
 config: |
   mappings: [...]
-  llm_pr:
-    enabled: true
 openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 ```
-Put `OPENAI_API_KEY` in a GitHub **Environment** (not a plain repo/org secret), and add `environment: production` (or whatever it's named) to the job.
+Put `OPENAI_API_KEY` in a GitHub **Environment** (not a plain repo/org secret), and add `environment: production` (or whatever it's named) to the job. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright and always use the deterministic title/body.
 
-**LLM semantic safety review** (`safety_review.py`) — the opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict is a hard halt, no PR (never treated as a pass). Catches what a regex can't: a real customer name, an internal codename, proprietary logic described in a comment.
+**LLM semantic safety review** (`safety_review.py`) — **off by default**, and the opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict is a hard halt, no PR (never treated as a pass). Catches what a regex can't: a real customer name, an internal codename, proprietary logic described in a comment.
 ```yaml
 config: |
   mappings: [...]

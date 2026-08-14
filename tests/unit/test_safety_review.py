@@ -188,6 +188,11 @@ def _write_prod_oss_pair(tmp_path, *, llm_safety_review_enabled=True):
         "    break_check:\n"
         '      install: "true"\n'
         '      run: "true"\n'
+        # These tests are about safety_review, not pr_writer -- explicitly off so
+        # the shared OpenAI mock below (built only to return a SafetyVerdict)
+        # isn't also hit by pr_writer now that llm_pr defaults to enabled.
+        "llm_pr:\n"
+        "  enabled: false\n"
         "llm_safety_review:\n"
         f"  enabled: {str(llm_safety_review_enabled).lower()}\n",
     )

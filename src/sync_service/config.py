@@ -56,9 +56,11 @@ class Mapping(BaseModel):
 
 
 class LLMPRConfig(BaseModel):
-    # Off by default -- pr_writer.py falls back to a deterministic writer on any
-    # failure/missing key, so OpenAI is never a dependency of the sync itself.
-    enabled: bool = False
+    # On by default -- pr_writer.py falls back to a deterministic writer on any
+    # failure/missing key, so OpenAI is never a hard dependency of the sync itself.
+    # Set to false to skip the LLM call outright and always use the deterministic
+    # title/body.
+    enabled: bool = True
 
 
 class SafetyReviewConfig(BaseModel):

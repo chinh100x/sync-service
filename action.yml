@@ -22,11 +22,12 @@ inputs:
     required: true
   openai-api-key:
     description: >
-      Optional. Only used if a mapping config sets `llm_pr.enabled: true` -- powers
-      pr_writer.py's human-readable PR title/body. The calling workflow's job must
-      declare `environment: production` (or wherever this secret lives) for
-      `secrets.OPENAI_API_KEY` to resolve. Never required: with llm_pr disabled, or
-      this left empty, the sync falls back to a fully deterministic PR title/body.
+      Optional, but powers pr_writer.py's human-readable PR title/body, which is
+      on by default (llm_pr.enabled defaults to true). The calling workflow's job
+      must declare `environment: production` (or wherever this secret lives) for
+      `secrets.OPENAI_API_KEY` to resolve. Never required: with this left empty,
+      llm_pr.enabled set to false, or any OpenAI-side failure, the sync falls back
+      to a fully deterministic PR title/body.
     required: false
     default: ""
   openai-model:
