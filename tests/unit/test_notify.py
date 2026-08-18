@@ -2,6 +2,10 @@ from sync_service import notify
 
 
 def test_comment_on_commit_prints_and_also_posts_to_slack(monkeypatch, capsys):
+    # GITHUB_REPOSITORY is set automatically on every real GitHub Actions runner --
+    # without neutralizing it, this test's outcome depends on whether it happens to
+    # run locally (unset) or in real CI (always set), rather than being deterministic.
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
