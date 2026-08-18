@@ -13,7 +13,8 @@ tradeoff (simplicity over conflict-tracking), not a bug.
 *OSS -> production (the reverse direction) isn't implemented yet — planned for later.*
 
 This directory is a standalone project. It doesn't inherit CI/build
-conventions from any other repo.
+conventions from any other repo, but does follow the org-wide
+[100x Engineering Standards](#contributing) (DAP-273).
 
 ## Layout
 
@@ -34,7 +35,7 @@ src/sync_service/
 tests/unit/         one test file per module
 tests/integration/  full end-to-end scenarios through cli.main() against two local git repos — no GitHub needed
 action.yml          composite GitHub Action wrapping the CLI, for real deployment
-Makefile            `make install` / `make lint` / `make test` / `make check` (lint + test) — same targets CI runs
+Makefile            `make install` / `make lint` / `make format` / `make typecheck` / `make test` / `make check` (lint + typecheck + test) — same stages CI runs, in the same order
 ```
 
 ## Try it locally
@@ -43,15 +44,18 @@ Makefile            `make install` / `make lint` / `make test` / `make check` (l
 
 ```bash
 make install
+pre-commit install   # optional but recommended -- see below
 ```
-Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`. No GitHub token, no `gitleaks` binary, no real repos needed for any of this.
+`make install` creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`, `pyright`. No GitHub token, no `gitleaks` binary, no real repos needed for any of this.
 
-### 2. Lint and run the tests
+`pre-commit install` wires up `.pre-commit-config.yaml`: on every commit, `ruff format` and an import-sort fix run automatically, plus `detect-secrets` checks the diff against `.secrets.baseline`. Needs [`pre-commit`](https://pre-commit.com/) itself installed once (`uv tool install pre-commit`, or any other way you'd normally install a Python tool). The full lint rule set (unused imports/names, undefined names, bugbear) isn't part of this hook — it's a CI gate (below), not a commit blocker.
+
+### 2. Lint, type-check, and run the tests
 
 ```bash
-make check   # make lint + make test
+make check   # make lint + make typecheck + make test
 ```
-Lint is `ruff` (unused imports/names, undefined names — not layered with style rules this codebase doesn't follow). Tests: 82 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `cli.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs the same `make check` on every push/PR.
+Lint is `ruff` (`select = ["E", "F", "I", "UP", "B"]`, line-length 100). Type checking is `pyright` in basic mode. Tests: 84 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `cli.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs these same three stages as separate, ordered jobs, plus a fourth security-scan stage (Trufflehog/Trivy/Semgrep) on every push/PR.
 
 ### 3. See one end-to-end scenario narrated, with output
 
@@ -188,3 +192,15 @@ echo -n "<the token>" | gh secret set SYNC_SERVICE_DEST_TOKEN --repo you/prod-re
 ```
 
 Either way, this only ever writes the secret — GitHub never lets you read an existing secret's value back afterward, from the UI, the API, or `gh`, regardless of permissions. If you lose track of the value or need to rotate it, generate a new token and overwrite the secret the same way; there's no way to recover the old one.
+
+## Contributing
+
+Per the org-wide [100x Engineering Standards](https://app.notion.com/p/vireox/100x-Engineering-Standards-3bf1041986e580cbafdbfbb28a090725) (DAP-273):
+
+- **PRs, not direct pushes to `main`.** Branch protection requires at least one human approval (`CODEOWNERS`) and all CI checks green before merge — no exception for AI-authored PRs, same bar as anyone else's.
+- **AI authorship is always disclosed**, never passed off as human work: an `Assisted-by:` git trailer on the relevant commits, plus the checkbox in `.github/pull_request_template.md`.
+- **A human reviews and merges.** An agent can open a PR proposing a change, but shouldn't push straight to `main` or merge its own PR.
+- **Verification is real, not claimed.** Run `make check` against your own local changes before opening a PR — not "it passed before" or "it's already on main."
+
+Local setup: `make install && pre-commit install` (see [Try it locally](#try-it-locally) above). CI runs lint → typecheck → test → security scan, in that order, on every PR.
+
