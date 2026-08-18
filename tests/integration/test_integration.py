@@ -36,8 +36,14 @@ mappings:
 """
 
 
+def _brk_mod(body: str) -> str:
+    return f"def run():\n    {body}\n\nif __name__ == '__main__':\n    run()\n"
+
+
 def _git(repo, *args):
-    return subprocess.run(["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True)
+    return subprocess.run(
+        ["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
 
 
 def _rev(repo):
@@ -96,7 +102,7 @@ def test_single_run_touching_two_mappings_opens_a_pr_for_each(tmp_path, capsys):
         'ENDPOINT = "https://cag-mcp.internal/v1/report"\n\ndef check():\n    return True\n',
     )
     _write(prod, "src/portmon/internal_reporting.py", "SECRET_TENANT_ID = 'do-not-ship'\n")
-    _write(prod, "src/brk/mod.py", "def run():\n    print('ok')\n\nif __name__ == '__main__':\n    run()\n")
+    _write(prod, "src/brk/mod.py", _brk_mod("print('ok')"))
     head = _commit(prod, "portmon+brk changes")
 
     exit_code = _run(prod, oss, base, head)
@@ -107,7 +113,9 @@ def test_single_run_touching_two_mappings_opens_a_pr_for_each(tmp_path, capsys):
     assert len(branches) == 2  # one PR per mapping touched, not one for the whole commit
 
     files_by_branch = {b: _files_on_branch(oss, b) for b in branches}
-    portmon_branch = next(b for b, files in files_by_branch.items() if "plugin/covenant.py" in files)
+    portmon_branch = next(
+        b for b, files in files_by_branch.items() if "plugin/covenant.py" in files
+    )
     brk_branch = next(b for b, files in files_by_branch.items() if "brk/mod.py" in files)
 
     assert "plugin/internal_reporting.py" not in files_by_branch[portmon_branch]  # excluded
@@ -127,7 +135,10 @@ def test_outside_edit_is_silently_overwritten_by_the_next_forward_sync(tmp_path,
     _write(oss, "README.md", "# oss\n")
     _commit(oss, "initial")
 
-    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n\ndef audit():\n    return 'ok'\n")
+    _write(
+        prod, "src/portmon/covenant.py",
+        "def check():\n    return True\n\ndef audit():\n    return 'ok'\n",
+    )
     head = _commit(prod, "portmon: add audit()")
     exit_code = _run(prod, oss, base, head)
     branch = _BRANCH_RE.findall(capsys.readouterr().out)[0]
@@ -141,7 +152,10 @@ def test_outside_edit_is_silently_overwritten_by_the_next_forward_sync(tmp_path,
 
     # prod changes the same file again, independently
     next_base = head
-    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n\ndef audit():\n    return 'ok'\n\n# prod tweak\n")
+    _write(
+        prod, "src/portmon/covenant.py",
+        "def check():\n    return True\n\ndef audit():\n    return 'ok'\n\n# prod tweak\n",
+    )
     next_head = _commit(prod, "portmon: another tweak")
     exit_code = _run(prod, oss, next_base, next_head)
     branch = _BRANCH_RE.findall(capsys.readouterr().out)[0]
@@ -154,12 +168,12 @@ def test_outside_edit_is_silently_overwritten_by_the_next_forward_sync(tmp_path,
 
 def test_breakcheck_failure_halts_reverts_and_succeeds_on_retry(tmp_path, capsys):
     prod, oss = _init_pair(tmp_path)
-    _write(prod, "src/brk/mod.py", "def run():\n    print('ok')\n\nif __name__ == '__main__':\n    run()\n")
+    _write(prod, "src/brk/mod.py", _brk_mod("print('ok')"))
     base = _commit(prod, "initial")
     _write(oss, "README.md", "# oss\n")
     _commit(oss, "initial")
 
-    _write(prod, "src/brk/mod.py", "def run():\n    raise RuntimeError('boom')\n\nif __name__ == '__main__':\n    run()\n")
+    _write(prod, "src/brk/mod.py", _brk_mod("raise RuntimeError('boom')"))
     head = _commit(prod, "brk: introduce a bug")
     exit_code = _run(prod, oss, base, head)
     printed = capsys.readouterr().out
@@ -168,9 +182,10 @@ def test_breakcheck_failure_halts_reverts_and_succeeds_on_retry(tmp_path, capsys
     assert "break check failed" in printed
     assert "```\n" in printed  # raw command output fenced, not dumped as plain text
     assert _BRANCH_RE.findall(printed) == []  # no PR opened
-    assert _git(oss, "status", "--porcelain").stdout == ""  # working tree reverted, nothing left dangling
+    # working tree reverted, nothing left dangling
+    assert _git(oss, "status", "--porcelain").stdout == ""
 
-    _write(prod, "src/brk/mod.py", "def run():\n    print('fixed')\n\nif __name__ == '__main__':\n    run()\n")
+    _write(prod, "src/brk/mod.py", _brk_mod("print('fixed')"))
     retry_head = _commit(prod, "brk: fix the bug")
     exit_code = _run(prod, oss, head, retry_head)
     printed = capsys.readouterr().out

@@ -26,7 +26,9 @@ def test_comment_on_commit_links_the_sha_when_github_repository_is_set(monkeypat
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
-    result = notify.comment_on_commit("e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted")
+    result = notify.comment_on_commit(
+        "e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted"
+    )
 
     url = "https://github.com/chinh100x/prod/commit/e3369bc4f775216af1ccc45d2c1aa8098d5164b0"
     # Printed/returned: a bare URL -- GitHub Actions' own log viewer auto-linkifies

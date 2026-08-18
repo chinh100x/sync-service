@@ -87,6 +87,6 @@ class SyncConfig(BaseModel):
         return self
 
     @classmethod
-    def load(cls, path: str | Path) -> "SyncConfig":
+    def load(cls, path: str | Path) -> SyncConfig:
         raw = yaml.safe_load(Path(path).read_text())
         return cls.model_validate(raw)

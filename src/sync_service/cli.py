@@ -38,14 +38,19 @@ def run_mapping(
     # Tracked via a dedicated ref, not the branch name -- the final name is a clean,
     # title-derived slug with no sha in it, so it can't double as the idempotency key.
     if publish.already_synced(dest_repo, mapping.key, head_sha):
-        print(f"[sync:{mapping.key}] PR already exists for this (mapping, head_sha) — skipping (idempotent re-run)")
+        print(
+            f"[sync:{mapping.key}] PR already exists for this (mapping, head_sha) "
+            "— skipping (idempotent re-run)"
+        )
         return "skipped-exists"
 
     # Temporary working name -- candidate_diff() below needs a real commit on a real
     # branch before the title (and final branch name) can be generated.
     branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
 
-    desired, scrubbed_categories = scrub.apply(source_repo, mapping.source, mapping.dest, mapping.exclude, mapping.redact)
+    desired, scrubbed_categories = scrub.apply(
+        source_repo, mapping.source, mapping.dest, mapping.exclude, mapping.redact
+    )
     if not desired:
         print(f"[sync:{mapping.key}] nothing under {mapping.source}/ to propagate")
         return "empty"
@@ -55,7 +60,8 @@ def run_mapping(
     if hits:
         notify.comment_on_commit(
             head_sha,
-            f"[{project_label}] secret scan hit in {mapping.key}: {hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
+            f"[{project_label}] secret scan hit in {mapping.key}: "
+            f"{hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
         )
         return "secret-halt"
 
@@ -66,11 +72,13 @@ def run_mapping(
             enabled=llm_safety_review_enabled,
         )
         if verdict is not None:
-            print(f"[safety-review:{mapping.key}] passed" if verdict.passed else f"[safety-review:{mapping.key}] blocked")
+            status = "passed" if verdict.passed else "blocked"
+            print(f"[safety-review:{mapping.key}] {status}")
     except safety_review.SafetyReviewUnavailable as exc:
         notify.comment_on_commit(
             head_sha,
-            f"[{project_label}] {mapping.key}: semantic safety review unavailable ({exc}) -- halted out of caution, no PR.",
+            f"[{project_label}] {mapping.key}: semantic safety review unavailable "
+            f"({exc}) -- halted out of caution, no PR.",
         )
         return "safety-review-error"
 
@@ -78,7 +86,8 @@ def run_mapping(
         categories = f" (categories: {', '.join(verdict.categories)})" if verdict.categories else ""
         notify.comment_on_commit(
             head_sha,
-            f"[{project_label}] {mapping.key}: semantic safety review blocked this change: {verdict.summary}{categories}. Halted, no PR.",
+            f"[{project_label}] {mapping.key}: semantic safety review blocked this change: "
+            f"{verdict.summary}{categories}. Halted, no PR.",
         )
         return "safety-review-halt"
 
@@ -95,7 +104,8 @@ def run_mapping(
             # same ``` syntax, so one format serves both channels.
             notify.comment_on_commit(
                 head_sha,
-                f"[{project_label}] {mapping.key}: break check failed at `{check.failed_step}`:\n```\n{check.output}\n```",
+                f"[{project_label}] {mapping.key}: break check failed at "
+                f"`{check.failed_step}`:\n```\n{check.output}\n```",
             )
             publish.discard_working_tree_changes(dest_repo)
             return "breakcheck-halt"
@@ -159,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--dest-repo", required=True, help="the OSS repo checkout")
     run_p.add_argument("--base", required=True)
     run_p.add_argument("--head", required=True)
-    run_p.add_argument("--base-branch", default="main", help="the OSS repo's branch to open the PR against")
+    run_p.add_argument(
+        "--base-branch", default="main", help="the OSS repo's branch to open the PR against"
+    )
 
     args = parser.parse_args(argv)
 
@@ -179,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
         if config.project_name:
             slug = config.project_name.lower().replace(" ", "-")
             os.environ.setdefault("SYNC_SERVICE_COMMIT_NAME", f"{config.project_name} Sync Bot")
-            os.environ.setdefault("SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com")
+            os.environ.setdefault(
+                "SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com"
+            )
 
         files = diff.changed_files(source_repo, args.base, args.head)
         hits = diff.match(files, config.mappings)

@@ -6,7 +6,9 @@ GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
 
 def _git(repo, *args):
-    return subprocess.run(["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True)
+    return subprocess.run(
+        ["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
 
 
 def _write(repo, rel, text):
@@ -22,7 +24,9 @@ def _commit(repo, message):
 
 
 def _make_context(**overrides):
-    defaults = dict(mapping_key="portmon", files={"plugin/covenant.py": "def check():\n    return True\n"})
+    defaults = dict(
+        mapping_key="portmon", files={"plugin/covenant.py": "def check():\n    return True\n"}
+    )
     defaults.update(overrides)
     return safety_review.SafetyReviewContext(**defaults)
 
@@ -83,7 +87,7 @@ def test_missing_api_key_raises_unavailable_without_calling_openai(monkeypatch):
 
     try:
         safety_review.review(_make_context(), enabled=True)
-        assert False, "expected SafetyReviewUnavailable"
+        raise AssertionError("expected SafetyReviewUnavailable")
     except safety_review.SafetyReviewUnavailable as exc:
         assert "OPENAI_API_KEY" in str(exc)
 
@@ -97,7 +101,7 @@ def test_content_too_large_raises_unavailable_without_calling_openai(monkeypatch
 
     try:
         safety_review.review(huge, enabled=True)
-        assert False, "expected SafetyReviewUnavailable"
+        raise AssertionError("expected SafetyReviewUnavailable")
     except safety_review.SafetyReviewUnavailable as exc:
         assert "exceeds" in str(exc)
 
@@ -138,7 +142,7 @@ def test_generic_exception_raises_unavailable(monkeypatch):
 
     try:
         safety_review.review(_make_context(), enabled=True)
-        assert False, "expected SafetyReviewUnavailable"
+        raise AssertionError("expected SafetyReviewUnavailable")
     except safety_review.SafetyReviewUnavailable:
         pass
 
@@ -151,7 +155,7 @@ def test_timeout_raises_unavailable(monkeypatch):
 
     try:
         safety_review.review(_make_context(), enabled=True)
-        assert False, "expected SafetyReviewUnavailable"
+        raise AssertionError("expected SafetyReviewUnavailable")
     except safety_review.SafetyReviewUnavailable:
         pass
 
@@ -162,7 +166,7 @@ def test_malformed_output_raises_unavailable(monkeypatch):
 
     try:
         safety_review.review(_make_context(), enabled=True)
-        assert False, "expected SafetyReviewUnavailable"
+        raise AssertionError("expected SafetyReviewUnavailable")
     except safety_review.SafetyReviewUnavailable:
         pass
 
@@ -269,7 +273,8 @@ def test_enabled_but_unavailable_is_a_real_failure_exit_1(tmp_path, monkeypatch)
                            "--source-repo", str(prod), "--dest-repo", str(oss),
                            "--base", base, "--head", head])
 
-    assert exit_code == 1  # distinct from the passed=False halt above -- this is broken, not enforcing
+    # distinct from the passed=False halt above -- this is broken, not enforcing
+    assert exit_code == 1
 
 
 def test_secret_scan_hit_short_circuits_before_safety_review_even_runs(tmp_path, monkeypatch):
@@ -293,7 +298,9 @@ def test_block_comment_never_leaks_more_than_the_categorical_summary(tmp_path, m
     head = _commit(prod, "change")
 
     verdict = safety_review.SafetyVerdict(
-        passed=False, categories=["internal_deal_reference"], summary="references an internal deal codename"
+        passed=False,
+        categories=["internal_deal_reference"],
+        summary="references an internal deal codename",
     )
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")

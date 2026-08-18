@@ -40,7 +40,10 @@ def test_commit_to_branch_no_op_when_content_is_identical(tmp_path):
 
 
 def _is_ancestor(repo, maybe_ancestor, branch):
-    proc = subprocess.run(["git", "merge-base", "--is-ancestor", maybe_ancestor, branch], cwd=repo, capture_output=True)
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", maybe_ancestor, branch],
+        cwd=repo, capture_output=True,
+    )
     return proc.returncode == 0
 
 
@@ -88,13 +91,17 @@ def test_commit_to_branch_credits_the_given_author_but_keeps_the_bot_as_committe
     _init_repo(repo)
     (repo / "file.txt").write_text("changed\n")
 
-    publish.commit_to_branch(repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>")
+    publish.commit_to_branch(
+        repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>"
+    )
 
     author = subprocess.run(
-        ["git", "log", "-1", "--pretty=%an <%ae>"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%an <%ae>"],
+        cwd=repo, capture_output=True, text=True, check=True,
     ).stdout.strip()
     committer = subprocess.run(
-        ["git", "log", "-1", "--pretty=%cn <%ce>"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%cn <%ce>"],
+        cwd=repo, capture_output=True, text=True, check=True,
     ).stdout.strip()
 
     assert author == "Jane Dev <jane@example.com>"
@@ -107,12 +114,15 @@ def test_reword_commit_preserves_the_original_author(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "file.txt").write_text("changed\n")
-    publish.commit_to_branch(repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>")
+    publish.commit_to_branch(
+        repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>"
+    )
 
     publish.reword_commit(repo, "Sync x changes")
 
     author = subprocess.run(
-        ["git", "log", "-1", "--pretty=%an <%ae>"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--pretty=%an <%ae>"],
+        cwd=repo, capture_output=True, text=True, check=True,
     ).stdout.strip()
     assert author == "Jane Dev <jane@example.com>"  # --amend without --author keeps it
 

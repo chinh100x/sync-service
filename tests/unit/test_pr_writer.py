@@ -8,7 +8,9 @@ SENSITIVE_ENDPOINT = "cag-mcp.internal"
 
 
 def _git(repo, *args):
-    return subprocess.run(["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True)
+    return subprocess.run(
+        ["git", *GIT_ID, *args], cwd=repo, capture_output=True, text=True, check=True
+    )
 
 
 def _write(repo, rel, text):
@@ -303,7 +305,9 @@ def _write_prod_oss_pair(tmp_path, *, redact_rule="", exclude_extra=""):
 def test_raw_production_commit_message_never_reaches_openai(tmp_path, monkeypatch):
     prod, oss, base = _write_prod_oss_pair(tmp_path)
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
-    head = _commit(prod, f"Fix {SENSITIVE_COMMIT_TEXT}\n\nCustomer uses /CO3/RockyMountain/IC/ internally.")
+    head = _commit(
+        prod, f"Fix {SENSITIVE_COMMIT_TEXT}\n\nCustomer uses /CO3/RockyMountain/IC/ internally."
+    )
 
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -320,7 +324,9 @@ def test_raw_production_commit_message_never_reaches_openai(tmp_path, monkeypatc
 
 def test_excluded_production_files_never_reach_openai(tmp_path, monkeypatch):
     prod, oss, base = _write_prod_oss_pair(tmp_path)
-    _write(prod, "src/portmon/internal_reporting.py", "SECRET_CONTEXT = 'changed, still excluded'\n")
+    _write(
+        prod, "src/portmon/internal_reporting.py", "SECRET_CONTEXT = 'changed, still excluded'\n"
+    )
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
     head = _commit(prod, "change")
 

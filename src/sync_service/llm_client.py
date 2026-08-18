@@ -41,5 +41,7 @@ def structured_call(
     )
     parsed = response.output_parsed
     if parsed is None:
-        raise LLMCallFailed("model returned no usable structured output (refusal or empty response)")
+        raise LLMCallFailed(
+            "model returned no usable structured output (refusal or empty response)"
+        )
     return parsed

@@ -45,19 +45,34 @@ class ChangeType(str, Enum):
 # Rendered as the "## Types of Changes" checklist, in this order -- label text
 # matches the project's own PR template verbatim (emoji + parenthetical included).
 _CHANGE_TYPE_LABELS: dict[ChangeType, str] = {
-    ChangeType.BREAKING: "❌ Breaking change (fix or feature that would cause existing functionality to not work as expected)",
+    ChangeType.BREAKING: (
+        "❌ Breaking change (fix or feature that would cause existing "
+        "functionality to not work as expected)"
+    ),
     ChangeType.FEATURE: "🚀 New feature (non-breaking change which adds functionality)",
     ChangeType.BUGFIX: "🕷 Bug fix (non-breaking change which fixes an issue)",
-    ChangeType.PERFORMANCE: "👏 Performance optimization (non-breaking change which addresses a performance issue)",
-    ChangeType.REFACTOR: "🛠 Refactor (non-breaking change which does not change existing behavior or add new functionality)",
+    ChangeType.PERFORMANCE: (
+        "👏 Performance optimization (non-breaking change which addresses a performance issue)"
+    ),
+    ChangeType.REFACTOR: (
+        "🛠 Refactor (non-breaking change which does not change existing "
+        "behavior or add new functionality)"
+    ),
     ChangeType.CHORE: "🔧 Chore (routine maintenance or tasks not affecting users)",
-    ChangeType.LIBRARY_UPDATE: "📗 Library update (non-breaking change that will update one or more libraries to newer versions)",
+    ChangeType.LIBRARY_UPDATE: (
+        "📗 Library update (non-breaking change that will update one or "
+        "more libraries to newer versions)"
+    ),
     ChangeType.BUILD: "📦 Build (build system or external dependencies changes)",
     ChangeType.CI: "⚙️ CI (CI/CD configuration and scripts)",
     ChangeType.INFRASTRUCTURE: "🏗 Infrastructure (infrastructure-related changes)",
-    ChangeType.DATA_GOVERNANCE: "🗂 Data governance (changes to data access, ownership, classification, or compliance)",
+    ChangeType.DATA_GOVERNANCE: (
+        "🗂 Data governance (changes to data access, ownership, classification, or compliance)"
+    ),
     ChangeType.TEST: "✅ Test (non-breaking change related to testing)",
-    ChangeType.DOCUMENTATION: "📝 Documentation (non-breaking change that doesn't change code behavior, can skip testing)",
+    ChangeType.DOCUMENTATION: (
+        "📝 Documentation (non-breaking change that doesn't change code behavior, can skip testing)"
+    ),
     ChangeType.REVERT: "⏪ Revert (reverts a previous change)",
 }
 
