@@ -92,6 +92,8 @@ The token needs write access to the **OSS** repo only — the production repo's 
 
 ### 2. Add the workflow to the production repo
 
+This is the full setup — every feature the tool has, wired in from the start:
+
 ```yaml
 # .github/workflows/sync.yaml, in the production repo
 name: sync-service
@@ -103,6 +105,9 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # Needed for secrets.OPENAI_API_KEY (a GitHub Environment secret, not a plain
+    # repo/org one) to resolve below.
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
@@ -118,54 +123,68 @@ jobs:
                 break_check:
                   install: "pip install -e ."
                   run: "portmon run --deal demo-01"
+                public_reason: "Shared monitoring implementation used by the open-source package."
+            llm_safety_review:
+              enabled: true
+            project_name: Prod
           target-repo: you-oss/portfolio-monitoring   # the OSS repo
           target-branch: main
           target-token: ${{ secrets.SYNC_SERVICE_DEST_TOKEN }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          slack-channel: ${{ secrets.SLACK_CHANNEL }}
           base: ${{ github.event.before }}
           head: ${{ github.sha }}
 ```
+
+What each piece does, and what happens if you leave it out:
+
+- **`source`/`dest`** are optional in a mapping — omit both to track the whole repo instead of a subdirectory. Anything that shouldn't cross needs its own entry in `exclude` (exact paths only, no wildcards).
+- **`public_reason`** — optional, human-authored line explaining why this mapping propagates; shows up in the PR body.
+- **Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, no config needed to enable it. Advisory only, never part of the sync/security decision: on any failure, timeout, or missing `OPENAI_API_KEY`, it falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) — OpenAI is never a hard dependency of the sync itself. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright.
+- **`llm_safety_review.enabled`** — **off by default**, shown above as `true`. The opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict is a hard halt, no PR, never treated as a pass. Catches what a regex can't — a real customer name, an internal codename, proprietary logic described in a comment. Uses the same `openai-api-key` as the PR writer.
+- **`project_name`** — optional human-readable label (e.g. `Prod`) used in Slack messages and as the commit author's display name; omit to fall back to a mechanical `label:mapping_key` prefix.
+- **`slack-webhook-url`/`slack-channel`** (`notify.py`/`slack.py`) — optional, best-effort; a missing or broken webhook never affects whether the sync itself succeeds. `slack-channel` only matters if the webhook's own Slack app honors a channel override.
 
 Two things worth knowing about `base`/`head`:
 
 - `github.event.before` is all-zeros on a branch's first-ever push (no prior commit to diff against) — handle that edge case (e.g. fall back to `HEAD~1`) if you ever point this at a newly created branch.
 - `fetch-depth: 0` is required — `sync_service.diff` runs `git diff base..head`, which needs real history, not the tip-only commit a shallow (default) checkout gives you.
 
-`source`/`dest` are optional in a mapping — omit both to track the whole repo instead of a subdirectory. Anything that shouldn't cross needs its own entry in `exclude` (exact paths only, no wildcards).
-
 ### 3. Swap the built-in secret scanner for gitleaks
 
 `src/sync_service/secretscan.py` ships a handful of built-in regexes so local development has zero external dependencies. Real deployment should use [`gitleaks`](https://github.com/gitleaks/gitleaks) instead: write the `desired` dict out to a scratch directory and shell out to `gitleaks detect --no-git --source <dir>`, treating a non-zero exit as a hit (same halt path, just a stronger gate). Do this before pointing the workflow at a repo with real sensitive data in it.
 
-### 4. Optional features
-
-Enable any combination by adding fields to the mapping config's `config:` block and passing the matching secret through as an input.
-
-**Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, advisory only, never part of the sync/security decision. Falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) on any failure, timeout, or missing key — OpenAI is never a hard dependency of the sync itself.
-```yaml
-config: |
-  mappings: [...]
-openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-```
-Put `OPENAI_API_KEY` in a GitHub **Environment** (not a plain repo/org secret), and add `environment: production` (or whatever it's named) to the job. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright and always use the deterministic title/body.
-
-**LLM semantic safety review** (`safety_review.py`) — **off by default**, and the opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict is a hard halt, no PR (never treated as a pass). Catches what a regex can't: a real customer name, an internal codename, proprietary logic described in a comment.
-```yaml
-config: |
-  mappings: [...]
-  llm_safety_review:
-    enabled: true
-openai-api-key: ${{ secrets.OPENAI_API_KEY }}   # same key/Environment as above
-```
-
-**Slack notifications** (`notify.py`/`slack.py`) — best-effort; a missing or broken webhook never affects whether the sync itself succeeds.
-```yaml
-slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-slack-channel: ${{ secrets.SLACK_CHANNEL }}   # optional; only some webhook apps honor a channel override
-```
-
-### 5. Roll out order
+### 4. Roll out order
 
 1. Try it against a throwaway repo pair first (point the CLI at two scratch GitHub repos with a real remote configured, so `open_pr` takes the real `git push` + `gh pr create` path instead of dry-run).
 2. Wire the workflow into the real production repo, confirm one real commit produces the PR you expect.
 
 Before deploying against a repo that takes outside contributions on its default branch: this version has no divergence detection, so an outside edit on the OSS side can be silently overwritten by the next sync. Decide explicitly whether that's acceptable, or add a divergence check first.
+
+## Getting and setting `SYNC_SERVICE_DEST_TOKEN`
+
+This is the token from step 1 above — it needs `contents:write` + `pull_requests:write` on the **OSS** repo only.
+
+### Get one (fine-grained personal access token)
+
+1. Go to **github.com/settings/personal-access-tokens/new** (or: your GitHub avatar → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token).
+2. **Resource owner**: the account/org that owns the OSS repo.
+3. **Repository access**: "Only select repositories" → choose the OSS repo specifically — not "All repositories."
+4. **Permissions → Repository permissions**: set **Contents** to `Read and write`, and **Pull requests** to `Read and write`. Leave everything else at its default (`No access`).
+5. Set an expiration and click **Generate token**. Copy the value now — GitHub shows it exactly once, and there's no way to view it again later.
+
+(A GitHub App installation token works the same way and is the better choice if you're managing this for a whole org rather than one repo pair, but the fine-grained PAT above is the simpler path for a single repo pair.)
+
+### Set it as a repo secret
+
+Via the GitHub UI: production repo → **Settings → Secrets and variables → Actions → New repository secret** → name it `SYNC_SERVICE_DEST_TOKEN`, paste the token as the value, **Add secret**.
+
+Via the `gh` CLI:
+```bash
+gh secret set SYNC_SERVICE_DEST_TOKEN --repo you/prod-repo
+# pastes/prompts for the value; or pipe it in:
+echo -n "<the token>" | gh secret set SYNC_SERVICE_DEST_TOKEN --repo you/prod-repo
+```
+
+Either way, this only ever writes the secret — GitHub never lets you read an existing secret's value back afterward, from the UI, the API, or `gh`, regardless of permissions. If you lose track of the value or need to rotate it, generate a new token and overwrite the secret the same way; there's no way to recover the old one.
