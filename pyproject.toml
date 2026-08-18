@@ -36,4 +36,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
 include = ["src", "tests"]
-typeCheckMode = "basic"
+typeCheckingMode = "basic"

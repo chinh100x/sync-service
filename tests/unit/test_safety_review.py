@@ -23,12 +23,10 @@ def _commit(repo, message):
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def _make_context(**overrides):
-    defaults = dict(
+def _make_context() -> safety_review.SafetyReviewContext:
+    return safety_review.SafetyReviewContext(
         mapping_key="portmon", files={"plugin/covenant.py": "def check():\n    return True\n"}
     )
-    defaults.update(overrides)
-    return safety_review.SafetyReviewContext(**defaults)
 
 
 # --- fake OpenAI client -----------------------------------------------------------
@@ -115,6 +113,7 @@ def test_review_returns_passed_verdict(monkeypatch):
 
     result = safety_review.review(_make_context(), enabled=True)
 
+    assert result is not None  # enabled and the mock returned a verdict, never None here
     assert result == verdict
     assert result.passed is True
 
@@ -128,6 +127,7 @@ def test_review_returns_blocked_verdict_with_categories(monkeypatch):
 
     result = safety_review.review(_make_context(), enabled=True)
 
+    assert result is not None  # enabled and the mock returned a verdict, never None here
     assert result.passed is False
     assert "customer_name" in result.categories
 

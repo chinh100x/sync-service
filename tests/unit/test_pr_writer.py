@@ -25,23 +25,42 @@ def _commit(repo, message):
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def _make_context(**overrides):
-    defaults = dict(
-        mapping_key="portmon",
-        public_reason="Shared monitoring implementation used by the OSS package.",
-        changed_files=["plugin/covenant.py"],
-        sanitized_diff="+def check():\n+    return True\n",
-        scrubbed_categories=["internal_endpoint"],
-        validation=pr_writer.ValidationSummary(run_command="pytest tests/ -v"),
+def _make_context(
+    *,
+    mapping_key: str = "portmon",
+    public_reason: str | None = "Shared monitoring implementation used by the OSS package.",
+    changed_files: list[str] | None = None,
+    sanitized_diff: str = "+def check():\n+    return True\n",
+    scrubbed_categories: list[str] | None = None,
+    validation: pr_writer.ValidationSummary | None = None,
+) -> pr_writer.PRContext:
+    return pr_writer.PRContext(
+        mapping_key=mapping_key,
+        public_reason=public_reason,
+        changed_files=changed_files if changed_files is not None else ["plugin/covenant.py"],
+        sanitized_diff=sanitized_diff,
+        scrubbed_categories=(
+            scrubbed_categories if scrubbed_categories is not None else ["internal_endpoint"]
+        ),
+        validation=validation or pr_writer.ValidationSummary(run_command="pytest tests/ -v"),
     )
-    defaults.update(overrides)
-    return pr_writer.PRContext(**defaults)
 
 
-def _generated(**overrides):
-    defaults = dict(title="t", why="w", what=["s"], solution="sol", change_types=[])
-    defaults.update(overrides)
-    return pr_writer.GeneratedPRContent(**defaults)
+def _generated(
+    *,
+    title: str = "t",
+    why: str = "w",
+    what: list[str] | None = None,
+    solution: str = "sol",
+    change_types: list[pr_writer.ChangeType] | None = None,
+) -> pr_writer.GeneratedPRContent:
+    return pr_writer.GeneratedPRContent(
+        title=title,
+        why=why,
+        what=what if what is not None else ["s"],
+        solution=solution,
+        change_types=change_types if change_types is not None else [],
+    )
 
 
 # --- fake OpenAI client -----------------------------------------------------------
