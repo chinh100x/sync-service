@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff-format
+      # Import-sort auto-fix only on commit -- the full rule set (unused
+      # imports/names, undefined names, bugbear) runs in CI as a real gate,
+      # not silently auto-fixed at commit time. See pyproject.toml's
+      # [tool.ruff.lint].
+      - id: ruff
+        args: [--select, I, --fix]
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: package.lock.json
