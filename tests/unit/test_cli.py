@@ -65,11 +65,16 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
     cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -115,11 +120,16 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
     cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -163,9 +173,20 @@ def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
     # the identity that should end up crediting the far-side commit's Author.
     _git(prod, "add", "-A")
     subprocess.run(
-        ["git", "-c", "user.name=Jane Dev", "-c", "user.email=jane@example.com",
-         "commit", "-m", "change"],
-        cwd=prod, capture_output=True, text=True, check=True,
+        [
+            "git",
+            "-c",
+            "user.name=Jane Dev",
+            "-c",
+            "user.email=jane@example.com",
+            "commit",
+            "-m",
+            "change",
+        ],
+        cwd=prod,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     head = _rev(prod)
 
@@ -175,11 +196,16 @@ def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
     cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -226,11 +252,16 @@ def test_idempotent_rerun_is_recognized_via_the_sync_ref_not_the_branch_name(tmp
 
     args = [
         "run",
-        "--config", str(prod / "sync" / "monitoring.yaml"),
-        "--source-repo", str(prod),
-        "--dest-repo", str(oss),
-        "--base", base,
-        "--head", head,
+        "--config",
+        str(prod / "sync" / "monitoring.yaml"),
+        "--source-repo",
+        str(prod),
+        "--dest-repo",
+        str(oss),
+        "--base",
+        base,
+        "--head",
+        head,
     ]
 
     cli.main(args)
@@ -282,11 +313,16 @@ def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path, monkeypa
     exit_code = cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -331,11 +367,16 @@ def test_successful_pr_notifies_slack(tmp_path, monkeypatch):
     exit_code = cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -380,11 +421,16 @@ def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monk
     exit_code = cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 

@@ -65,6 +65,7 @@ def _generated(
 
 # --- fake OpenAI client -----------------------------------------------------------
 
+
 class _FakeResponse:
     def __init__(self, output_parsed):
         self.output_parsed = output_parsed
@@ -97,6 +98,7 @@ def _fake_openai(monkeypatch, behavior, calls=None):
 
 def _raising_openai(monkeypatch):
     """If constructed at all, fails the test -- used to prove OpenAI is never called."""
+
     def factory(**_kwargs):
         raise AssertionError("OpenAI() must not be constructed for this scenario")
 
@@ -104,6 +106,7 @@ def _raising_openai(monkeypatch):
 
 
 # --- DeterministicPRWriter ---------------------------------------------------------
+
 
 def test_deterministic_writer_lists_changed_files_and_public_reason():
     context = _make_context()
@@ -116,9 +119,11 @@ def test_deterministic_writer_lists_changed_files_and_public_reason():
 
 # --- OpenAIPRWriter success ---------------------------------------------------------
 
+
 def test_openai_writer_returns_parsed_content(monkeypatch):
     content = _generated(
-        title="Improve covenant validation", what=["Improved handling of X"],
+        title="Improve covenant validation",
+        what=["Improved handling of X"],
         why="Useful for other monitoring consumers.",
     )
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(content))
@@ -166,9 +171,11 @@ def test_openai_writer_never_receives_validation_field_names_as_facts_to_assert(
 
 # --- deterministic fallback: never make sync depend on OpenAI availability --------
 
+
 def test_build_pr_content_falls_back_on_generic_exception(monkeypatch):
     def behavior(**kw):
         raise RuntimeError("boom")
+
     _fake_openai(monkeypatch, behavior)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -181,6 +188,7 @@ def test_build_pr_content_falls_back_on_generic_exception(monkeypatch):
 def test_build_pr_content_falls_back_on_timeout(monkeypatch):
     def behavior(**kw):
         raise TimeoutError("request timed out")
+
     _fake_openai(monkeypatch, behavior)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -195,6 +203,7 @@ def test_build_pr_content_falls_back_on_rate_limit_like_error(monkeypatch):
 
     def behavior(**kw):
         raise FakeRateLimitError("rate limited")
+
     _fake_openai(monkeypatch, behavior)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -213,6 +222,7 @@ def test_build_pr_content_falls_back_on_malformed_output(monkeypatch):
 
 
 # --- disabled / no key: OpenAI must never be touched -------------------------------
+
 
 def test_disabled_feature_never_calls_openai(monkeypatch):
     _raising_openai(monkeypatch)
@@ -237,6 +247,7 @@ def test_missing_api_key_while_enabled_uses_fallback(monkeypatch):
 
 
 # --- render_markdown: Test Plan section is immune to injected/adversarial content --
+
 
 def test_render_markdown_test_plan_always_from_context_not_generated():
     # Simulates a fully-hijacked model output (as if a prompt injection in the diff
@@ -273,7 +284,10 @@ def test_render_markdown_test_plan_is_empty_when_nothing_was_tested():
 
 def test_render_markdown_change_types_checklist_is_a_closed_set():
     generated = pr_writer.GeneratedPRContent(
-        title="t", why="w", what=["s"], solution="sol",
+        title="t",
+        why="w",
+        what=["s"],
+        solution="sol",
         change_types=[pr_writer.ChangeType.REFACTOR],
     )
     context = _make_context()
@@ -288,6 +302,7 @@ def test_render_markdown_change_types_checklist_is_a_closed_set():
 
 
 # --- cli.py integration: what actually gets sent to the model ---------------------
+
 
 def _write_prod_oss_pair(tmp_path, *, redact_rule="", exclude_extra=""):
     prod = tmp_path / "prod"
@@ -331,9 +346,21 @@ def test_raw_production_commit_message_never_reaches_openai(tmp_path, monkeypatc
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-              "--source-repo", str(prod), "--dest-repo", str(oss),
-              "--base", base, "--head", head])
+    cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert len(calls) == 1
     sent = str(calls[0]["input"])
@@ -352,9 +379,21 @@ def test_excluded_production_files_never_reach_openai(tmp_path, monkeypatch):
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-              "--source-repo", str(prod), "--dest-repo", str(oss),
-              "--base", base, "--head", head])
+    cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert len(calls) == 1
     sent = str(calls[0]["input"])
@@ -376,9 +415,21 @@ def test_scrubbed_sensitive_values_never_reach_openai(tmp_path, monkeypatch):
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-              "--source-repo", str(prod), "--dest-repo", str(oss),
-              "--base", base, "--head", head])
+    cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert len(calls) == 1
     sent = str(calls[0]["input"])
@@ -395,8 +446,20 @@ def test_secret_hit_never_calls_openai(tmp_path, monkeypatch):
     _raising_openai(monkeypatch)  # would fail the test if constructed at all
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0  # a halt, not a crash

@@ -2,6 +2,7 @@
 Only the plumbing is shared -- what a failure *means* (fail-open vs. fail-closed)
 is decided entirely at the call site, not here.
 """
+
 from __future__ import annotations
 
 from typing import TypeVar

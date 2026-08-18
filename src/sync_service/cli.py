@@ -6,6 +6,7 @@ edits outside this tool, they're overwritten with no warning — deliberately
 simpler than tracking state, at the cost of ever detecting an outside edit
 before clobbering it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -208,8 +209,10 @@ def main(argv: list[str] | None = None) -> int:
             outcomes.append(
                 run_mapping(
                     mapping=m,
-                    source_repo=source_repo, dest_repo=dest_repo,
-                    head_sha=args.head, base_branch=args.base_branch,
+                    source_repo=source_repo,
+                    dest_repo=dest_repo,
+                    head_sha=args.head,
+                    base_branch=args.base_branch,
                     gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,

@@ -1,5 +1,6 @@
 """Trigger: which mappings did base..head touch, and what does the resulting
 OSS-side diff/commit metadata look like?"""
+
 from __future__ import annotations
 
 import subprocess

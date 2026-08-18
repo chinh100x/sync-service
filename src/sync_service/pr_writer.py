@@ -11,6 +11,7 @@ never the near/production repo or its commit message.
 `change_types` is a list of a fixed enum, not free text, so the model can only
 select from real categories, never invent one.
 """
+
 from __future__ import annotations
 
 import os
@@ -152,7 +153,8 @@ class DeterministicPRWriter:
         if context.scrubbed_categories:
             solution += (
                 " Production-specific configuration was excluded ("
-                + ", ".join(context.scrubbed_categories) + ")."
+                + ", ".join(context.scrubbed_categories)
+                + ")."
             )
         return GeneratedPRContent(
             title=f"Sync {context.mapping_key} changes",

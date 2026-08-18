@@ -5,6 +5,7 @@ cycle, and a no-op run. Replaces demo/run_demo.py, which only printed these
 for a human to eyeball -- this asserts on them instead, so a regression
 actually fails CI.
 """
+
 import re
 import subprocess
 
@@ -76,11 +77,16 @@ def _run(prod, oss, base, head):
     return cli.main(
         [
             "run",
-            "--config", str(prod / "sync" / "monitoring.yaml"),
-            "--source-repo", str(prod),
-            "--dest-repo", str(oss),
-            "--base", base,
-            "--head", head,
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
         ]
     )
 
@@ -136,7 +142,8 @@ def test_outside_edit_is_silently_overwritten_by_the_next_forward_sync(tmp_path,
     _commit(oss, "initial")
 
     _write(
-        prod, "src/portmon/covenant.py",
+        prod,
+        "src/portmon/covenant.py",
         "def check():\n    return True\n\ndef audit():\n    return 'ok'\n",
     )
     head = _commit(prod, "portmon: add audit()")
@@ -153,7 +160,8 @@ def test_outside_edit_is_silently_overwritten_by_the_next_forward_sync(tmp_path,
     # prod changes the same file again, independently
     next_base = head
     _write(
-        prod, "src/portmon/covenant.py",
+        prod,
+        "src/portmon/covenant.py",
         "def check():\n    return True\n\ndef audit():\n    return 'ok'\n\n# prod tweak\n",
     )
     next_head = _commit(prod, "portmon: another tweak")

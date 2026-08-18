@@ -5,6 +5,7 @@ tracked content — which, for OSS -> production or a public repo's own contribu
 is content this service didn't originate. It should never run with a write-capable
 token in its environment.
 """
+
 from __future__ import annotations
 
 import os

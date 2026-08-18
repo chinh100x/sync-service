@@ -4,6 +4,7 @@ no PR, no auto-redaction attempt.
 Small built-in scanner for local development only. Production deployment should
 run `gitleaks` over the same desired-tree contents instead — see README.md.
 """
+
 from __future__ import annotations
 
 import re

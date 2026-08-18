@@ -9,8 +9,17 @@ def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.name=Jane Dev", "-c", "user.email=jane@example.com",
-         "commit", "--allow-empty", "-m", "x"],
+        [
+            "git",
+            "-c",
+            "user.name=Jane Dev",
+            "-c",
+            "user.email=jane@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
         cwd=repo,
         check=True,
         capture_output=True,

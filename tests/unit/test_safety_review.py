@@ -31,6 +31,7 @@ def _make_context() -> safety_review.SafetyReviewContext:
 
 # --- fake OpenAI client -----------------------------------------------------------
 
+
 class _FakeResponse:
     def __init__(self, output_parsed):
         self.output_parsed = output_parsed
@@ -70,6 +71,7 @@ def _raising_openai(monkeypatch):
 
 # --- review(): disabled / misconfigured never touch the network -------------------
 
+
 def test_disabled_never_calls_openai(monkeypatch):
     _raising_openai(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # present, but feature is off
@@ -106,6 +108,7 @@ def test_content_too_large_raises_unavailable_without_calling_openai(monkeypatch
 
 # --- review(): success paths --------------------------------------------------------
 
+
 def test_review_returns_passed_verdict(monkeypatch):
     verdict = safety_review.SafetyVerdict(passed=True, categories=[], summary="looks generic")
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
@@ -134,9 +137,11 @@ def test_review_returns_blocked_verdict_with_categories(monkeypatch):
 
 # --- review(): every failure mode is a hard halt, never an implicit pass -----------
 
+
 def test_generic_exception_raises_unavailable(monkeypatch):
     def behavior(**kw):
         raise RuntimeError("boom")
+
     _fake_openai(monkeypatch, behavior)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -150,6 +155,7 @@ def test_generic_exception_raises_unavailable(monkeypatch):
 def test_timeout_raises_unavailable(monkeypatch):
     def behavior(**kw):
         raise TimeoutError("request timed out")
+
     _fake_openai(monkeypatch, behavior)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
@@ -172,6 +178,7 @@ def test_malformed_output_raises_unavailable(monkeypatch):
 
 
 # --- cli.py integration: the gate actually halts (or doesn't) the real pipeline ---
+
 
 def _write_prod_oss_pair(tmp_path, *, llm_safety_review_enabled=True):
     prod = tmp_path / "prod"
@@ -215,9 +222,21 @@ def test_disabled_by_default_never_calls_openai_and_sync_succeeds(tmp_path, monk
     _raising_openai(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0
 
@@ -231,9 +250,21 @@ def test_enabled_and_passed_lets_the_pr_open(tmp_path, monkeypatch, capsys):
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0
     assert "dry-run" in capsys.readouterr().out  # got all the way to publish
@@ -250,9 +281,21 @@ def test_enabled_and_blocked_halts_with_exit_0_not_a_tool_failure(tmp_path, monk
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0  # correct policy enforcement, not a tool failure
     # Blocked before commit_to_branch ever runs, so no branch was created under this
@@ -269,9 +312,21 @@ def test_enabled_but_unavailable_is_a_real_failure_exit_1(tmp_path, monkeypatch)
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # enabled but misconfigured
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     # distinct from the passed=False halt above -- this is broken, not enforcing
     assert exit_code == 1
@@ -285,9 +340,21 @@ def test_secret_scan_hit_short_circuits_before_safety_review_even_runs(tmp_path,
     _raising_openai(monkeypatch)  # would fail the test if constructed at all
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0
 
@@ -305,9 +372,21 @@ def test_block_comment_never_leaks_more_than_the_categorical_summary(tmp_path, m
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-              "--source-repo", str(prod), "--dest-repo", str(oss),
-              "--base", base, "--head", head])
+    cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     printed = capsys.readouterr().out
     assert "internal_deal_reference" in printed

@@ -1,6 +1,7 @@
 """Publish: commit the scrubbed content to a new branch, then open a PR for it. One
 branch/commit per mapping; PR opened via `gh` when a remote is configured, otherwise
 the PR body is printed instead (dry-run, e.g. this demo)."""
+
 from __future__ import annotations
 
 import base64
@@ -89,7 +90,9 @@ def rename_branch(dest_repo: Path, new_name: str) -> None:
     of shared history."""
     subprocess.run(
         ["git", *_git_id(), "branch", "-m", new_name],
-        cwd=dest_repo, check=True, capture_output=True,
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -99,7 +102,9 @@ def checkout_base(dest_repo: Path, base_branch: str) -> None:
     instead of base_branch."""
     subprocess.run(
         ["git", *_git_id(), "checkout", base_branch],
-        cwd=dest_repo, check=True, capture_output=True,
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -135,7 +140,9 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
     """
     subprocess.run(
         ["git", *_git_id(), "checkout", "-b", branch],
-        cwd=dest_repo, check=True, capture_output=True,
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(["git", *_git_id(), "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
 
@@ -144,11 +151,16 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
     )
     if nothing_staged:
         subprocess.run(
-            ["git", *_git_id(), "checkout", "-"], cwd=dest_repo, check=True, capture_output=True,
+            ["git", *_git_id(), "checkout", "-"],
+            cwd=dest_repo,
+            check=True,
+            capture_output=True,
         )
         subprocess.run(
             ["git", *_git_id(), "branch", "-D", branch],
-            cwd=dest_repo, check=True, capture_output=True,
+            cwd=dest_repo,
+            check=True,
+            capture_output=True,
         )
         return False
 
@@ -166,7 +178,9 @@ def reword_commit(dest_repo: Path, message: str) -> None:
     far-side context, never the raw (untrusted) production commit message."""
     subprocess.run(
         ["git", *_git_id(), "commit", "--amend", "-m", message],
-        cwd=dest_repo, check=True, capture_output=True,
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -193,9 +207,12 @@ def open_pr(
     "No remote" (dry-run success) and "remote but no `gh`" (failure) are
     deliberately different outcomes -- the latter means a real publish was
     intended and the environment can't do it."""
-    has_remote = subprocess.run(
-        ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
-    ).stdout.strip() != ""
+    has_remote = (
+        subprocess.run(
+            ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
+        ).stdout.strip()
+        != ""
+    )
 
     if not has_remote:
         return PublishResult(
@@ -218,11 +235,17 @@ def open_pr(
     gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
     proc = subprocess.run(
         [
-            "gh", "pr", "create",
-            "--base", base_branch,
-            "--head", branch,
-            "--title", title,
-            "--body", body,
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            base_branch,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
         ],
         cwd=dest_repo,
         capture_output=True,

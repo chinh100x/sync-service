@@ -5,6 +5,7 @@ directed at a channel (SLACK_CHANNEL, ignored by webhook apps that don't support
 Best-effort by design: every failure is swallowed and logged, never raised --
 Slack availability must never become a dependency of the sync succeeding.
 """
+
 from __future__ import annotations
 
 import json

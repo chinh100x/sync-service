@@ -83,7 +83,8 @@ def test_pr_opened_dry_run_posts_the_title_with_no_fake_link(monkeypatch):
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
     notify.pr_opened(
-        "Prod", "Sync portmon changes",
+        "Prod",
+        "Sync portmon changes",
         "[dry-run: no remote configured] Would open PR sync/portmon/abc123 -> main\nTitle: ...",
     )
 
