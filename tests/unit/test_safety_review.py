@@ -71,6 +71,7 @@ def _raising_openai(monkeypatch):
 
 # --- _build_system_prompt: additive only, never a replacement ---------------------
 
+
 def test_build_system_prompt_with_no_additional_context_is_just_the_base():
     prompt = safety_review._build_system_prompt(None)
     assert prompt == f"{safety_review._SYSTEM_PROMPT}\n\n{safety_review._RETURN_INSTRUCTION}"
@@ -212,6 +213,7 @@ def test_malformed_output_raises_unavailable(monkeypatch):
 
 # --- cli.py integration: the gate actually halts (or doesn't) the real pipeline ---
 
+
 def _write_prod_oss_pair(
     tmp_path, *, llm_safety_review_enabled=True, llm_safety_review_additional_context=None
 ):
@@ -321,9 +323,21 @@ def test_config_additional_context_reaches_the_real_llm_call(tmp_path, monkeypat
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
-                           "--source-repo", str(prod), "--dest-repo", str(oss),
-                           "--base", base, "--head", head])
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
 
     assert exit_code == 0
     assert "Also flag covenant threshold values." in calls[0]["input"][0]["content"]
