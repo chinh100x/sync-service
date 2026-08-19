@@ -303,7 +303,9 @@ def test_skipped_exists_notifies_slack_with_the_reason(tmp_path, monkeypatch):
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -409,7 +411,9 @@ def test_unchanged_notifies_slack_with_the_reason(tmp_path, monkeypatch):
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     # A real change from base to head (git commit needs a real diff to succeed),
