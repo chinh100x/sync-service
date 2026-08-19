@@ -90,7 +90,7 @@ runs:
         printf '%s\n' "$CONFIG_CONTENT" > "${{ runner.temp }}/sync-service-config.yaml"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v3
+      uses: astral-sh/setup-uv@v7
 
     - name: Install sync-service
       shell: bash
