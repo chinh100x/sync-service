@@ -48,7 +48,9 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
 
@@ -108,7 +110,9 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -165,7 +169,9 @@ def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -241,7 +247,9 @@ def test_idempotent_rerun_is_recognized_via_the_sync_ref_not_the_branch_name(tmp
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -295,7 +303,9 @@ def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path, monkeypa
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -351,7 +361,9 @@ def test_successful_pr_notifies_slack(tmp_path, monkeypatch):
         "    dest: plugin\n"
         "    break_check:\n"
         '      install: "true"\n'
-        '      run: "true"\n',
+        '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
@@ -405,6 +417,8 @@ def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monk
         "    break_check:\n"
         '      install: "true"\n'
         '      run: "true"\n'
+        "llm_safety_review:\n"
+        "  enabled: false\n"
         "project_name: Prod\n",
     )
     base = _commit(prod, "initial")

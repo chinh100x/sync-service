@@ -34,6 +34,8 @@ mappings:
     break_check:
       install: "true"
       run: "python3 brk/mod.py"
+llm_safety_review:
+  enabled: false
 """
 
 
