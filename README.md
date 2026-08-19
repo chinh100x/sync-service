@@ -109,9 +109,6 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Needed for secrets.OPENAI_API_KEY (a GitHub Environment secret, not a plain
-    # repo/org one) to resolve below.
-    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,7 +134,7 @@ jobs:
           target-token: ${{ secrets.SYNC_SERVICE_DEST_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-          slack-channel: ${{ secrets.SLACK_CHANNEL }}
+          slack-channel: ${{ vars.SLACK_CHANNEL }}
           base: ${{ github.event.before }}
           head: ${{ github.sha }}
 ```
@@ -168,11 +165,18 @@ Two things worth knowing about `base`/`head`:
 
 Before deploying against a repo that takes outside contributions on its default branch: this version has no divergence detection, so an outside edit on the OSS side can be silently overwritten by the next sync. Decide explicitly whether that's acceptable, or add a divergence check first.
 
-## Getting and setting `SYNC_SERVICE_DEST_TOKEN`
+## Setting the required secrets and variables
 
-This is the token from step 1 above — it needs `contents:write` + `pull_requests:write` on the **OSS** repo only.
+All four inputs above are plain **repo-level** Actions secrets/variables — no GitHub Environment needed, so there's nothing to gate behind an `environment:` key in the job.
 
-### Get one (fine-grained personal access token)
+| Name                      | Kind                            | Where it comes from                                        |
+| ------------------------- | ------------------------------- | ---------------------------------------------------------- |
+| `SYNC_SERVICE_DEST_TOKEN` | secret                          | a fine-grained PAT scoped to just the OSS repo (see below) |
+| `OPENAI_API_KEY`          | secret                          | your OpenAI account                                        |
+| `SLACK_WEBHOOK_URL`       | secret                          | the Slack app's Incoming Webhook                           |
+| `SLACK_CHANNEL`           | **variable**, nothing sensitive | whatever channel that webhook posts to                     |
+
+### Getting `SYNC_SERVICE_DEST_TOKEN` (fine-grained personal access token)
 
 1. Go to **github.com/settings/personal-access-tokens/new** (or: your GitHub avatar → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token).
 2. **Resource owner**: the account/org that owns the OSS repo.
@@ -180,20 +184,20 @@ This is the token from step 1 above — it needs `contents:write` + `pull_reques
 4. **Permissions → Repository permissions**: set **Contents** to `Read and write`, and **Pull requests** to `Read and write`. Leave everything else at its default (`No access`).
 5. Set an expiration and click **Generate token**. Copy the value now — GitHub shows it exactly once, and there's no way to view it again later.
 
-(A GitHub App installation token works the same way and is the better choice if you're managing this for a whole org rather than one repo pair, but the fine-grained PAT above is the simpler path for a single repo pair.)
+(A GitHub App installation token works the same way and is the better choice if you're managing this for a whole org rather than one repo pair, but the fine-grained PAT above is the simpler path for a single repo pair.) Don't use your own personal `gh auth token` here — it's scoped to your whole account, not just the OSS repo, and can get invalidated whenever you re-auth `gh` locally.
 
-### Set it as a repo secret
+### Setting all four via the `gh` CLI
 
-Via the GitHub UI: production repo → **Settings → Secrets and variables → Actions → New repository secret** → name it `SYNC_SERVICE_DEST_TOKEN`, paste the token as the value, **Add secret**.
-
-Via the `gh` CLI:
 ```bash
-gh secret set SYNC_SERVICE_DEST_TOKEN --repo you/prod-repo
-# pastes/prompts for the value; or pipe it in:
-echo -n "<the token>" | gh secret set SYNC_SERVICE_DEST_TOKEN --repo you/prod-repo
+echo -n "github_pat_xxx" | gh secret set SYNC_SERVICE_DEST_TOKEN --repo chinh100x/prod
+echo -n "sk-xxx" | gh secret set OPENAI_API_KEY --repo chinh100x/prod
+echo -n "https://hooks.slack.com/services/xxx" | gh secret set SLACK_WEBHOOK_URL --repo chinh100x/prod
+echo -n "#sync-service-listener" | gh variable set SLACK_CHANNEL --repo chinh100x/prod
 ```
 
-Either way, this only ever writes the secret — GitHub never lets you read an existing secret's value back afterward, from the UI, the API, or `gh`, regardless of permissions. If you lose track of the value or need to rotate it, generate a new token and overwrite the secret the same way; there's no way to recover the old one.
+Or via the GitHub UI: production repo → **Settings → Secrets and variables → Actions** → **Secrets** tab for the first three (**New repository secret**), **Variables** tab for `SLACK_CHANNEL` (**New repository variable**).
+
+Secrets only ever get written, never read back — GitHub gives no UI/API/`gh` path to view an existing secret's value afterward, regardless of permissions. If you lose track of a value or need to rotate it, generate a new one and overwrite the secret the same way; there's no way to recover the old one. `gh variable`, unlike `gh secret`, does let you read variable values back (`gh variable list`/`gh variable get`) since they aren't sensitive.
 
 ## Contributing
 
