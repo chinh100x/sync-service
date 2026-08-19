@@ -327,7 +327,9 @@ def _write_prod_oss_pair(tmp_path, *, redact_rule="", exclude_extra=""):
         '      run: "true"\n'
         f"{redact_rule}"
         "llm_pr:\n"
-        "  enabled: true\n",
+        "  enabled: true\n"
+        "llm_safety_review:\n"
+        "  enabled: false\n",
     )
     base = _commit(prod, "initial")
 

@@ -65,9 +65,12 @@ class LLMPRConfig(BaseModel):
 
 
 class SafetyReviewConfig(BaseModel):
-    # Off by default. Unlike llm_pr, a failure here (missing key, API error, content
-    # too large) is a hard halt, not a safe fallback -- see safety_review.py.
-    enabled: bool = False
+    # On by default. Unlike llm_pr, a failure here (missing key, API error, content
+    # too large) is a hard halt, not a safe fallback -- see safety_review.py. This
+    # means OPENAI_API_KEY is effectively required: with this on and no working key,
+    # every sync halts rather than silently skipping the review. Set to false to
+    # skip the review outright (no OpenAI dependency at all for that mapping).
+    enabled: bool = True
     # Optional, project-specific "also flag this" note (e.g. "covenant threshold
     # values", "internal deal codenames") -- appended to safety_review.py's fixed
     # base prompt, never replacing it. What counts as sensitive differs per repo;
