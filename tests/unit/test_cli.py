@@ -277,6 +277,166 @@ def test_idempotent_rerun_is_recognized_via_the_sync_ref_not_the_branch_name(tmp
     assert branches.count("sync-portmon-changes") == 1
 
 
+def test_skipped_exists_notifies_slack_with_the_reason(tmp_path, monkeypatch):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    args = [
+        "run",
+        "--config",
+        str(prod / "sync" / "monitoring.yaml"),
+        "--source-repo",
+        str(prod),
+        "--dest-repo",
+        str(oss),
+        "--base",
+        base,
+        "--head",
+        head,
+    ]
+
+    cli.main(args)  # first run: opens the PR, no assertions needed here
+
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+    exit_code = cli.main(args)  # second run, same head_sha -- idempotent re-run
+
+    assert exit_code == 0
+    assert len(captured) == 1
+    assert "idempotent re-run" in captured[0]
+
+
+def test_empty_mapping_notifies_slack_with_the_reason(tmp_path, monkeypatch):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        # The only file under source is excluded -- scrub.apply() ends up with
+        # nothing to propagate even though the mapping's own path was touched.
+        "    exclude: [src/portmon/covenant.py]\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(captured) == 1
+    assert "nothing under src/portmon/ to propagate" in captured[0]
+
+
+def test_unchanged_notifies_slack_with_the_reason(tmp_path, monkeypatch):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _write(
+        prod,
+        "sync/monitoring.yaml",
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n',
+    )
+    base = _commit(prod, "initial")
+    # A real change from base to head (git commit needs a real diff to succeed),
+    # but the OSS side is pre-seeded with exactly what this change scrubs to --
+    # so diff.match() fires, yet commit_to_branch finds nothing new to commit.
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    _write(oss, "plugin/covenant.py", "def check():\n    return False\n")
+    _commit(oss, "initial")
+
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(captured) == 1
+    assert "nothing to commit" in captured[0]
+
+
 def test_publish_failure_is_a_nonzero_exit_not_silent_success(tmp_path, monkeypatch):
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
