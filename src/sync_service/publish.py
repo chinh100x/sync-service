@@ -1,6 +1,7 @@
 """Publish: commit the scrubbed content to a new branch, then open a PR for it. One
 branch/commit per mapping; PR opened via `gh` when a remote is configured, otherwise
 the PR body is printed instead (dry-run, e.g. this demo)."""
+
 from __future__ import annotations
 
 import base64
@@ -47,19 +48,27 @@ def already_synced(dest_repo: Path, mapping_key: str, head_sha: str) -> bool:
     if local.returncode == 0:
         return True
 
-    remote = subprocess.run(["git", "ls-remote", "origin", ref], cwd=dest_repo, capture_output=True, text=True)
+    remote = subprocess.run(
+        ["git", "ls-remote", "origin", ref], cwd=dest_repo, capture_output=True, text=True
+    )
     return bool(remote.stdout.strip())
 
 
-def record_synced(dest_repo: Path, mapping_key: str, head_sha: str, token: str | None = None) -> None:
+def record_synced(
+    dest_repo: Path, mapping_key: str, head_sha: str, token: str | None = None
+) -> None:
     """Marks (mapping, head_sha) synced. Call only after a real success, never on a
     halt/failure, so a failed run still gets retried. Remote push is best-effort --
     a failure here just risks a redundant PR later, never an incorrect skip."""
     ref = _sync_ref(mapping_key, head_sha)
-    subprocess.run(["git", "update-ref", ref, "HEAD"], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "update-ref", ref, "HEAD"], cwd=dest_repo, check=True, capture_output=True
+    )
 
-    has_remote = subprocess.run(["git", "remote"], cwd=dest_repo, capture_output=True, text=True).stdout.strip() != ""
-    if not has_remote:
+    remote_out = subprocess.run(
+        ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
+    ).stdout
+    if not remote_out.strip():
         return
 
     push_cmd = ["git"]
@@ -79,14 +88,24 @@ def slugify(text: str, max_length: int = 50) -> str:
 def rename_branch(dest_repo: Path, new_name: str) -> None:
     """Renames the current, not-yet-pushed branch -- ordinary git, not a rewrite
     of shared history."""
-    subprocess.run(["git", *_git_id(), "branch", "-m", new_name], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", *_git_id(), "branch", "-m", new_name],
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
+    )
 
 
 def checkout_base(dest_repo: Path, base_branch: str) -> None:
     """Reset dest_repo to base_branch before processing a mapping -- otherwise a
     second mapping in the same run branches off the first mapping's commit
     instead of base_branch."""
-    subprocess.run(["git", *_git_id(), "checkout", base_branch], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", *_git_id(), "checkout", base_branch],
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
+    )
 
 
 def branch_exists(dest_repo: Path, branch: str) -> bool:
@@ -117,14 +136,32 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
     distinct from the Committer field (`_git_id()`, the bot identity).
 
     Returns False (no branch left behind) if there was nothing to commit --
-    happens when propagated content is already byte-identical to the far side."""
-    subprocess.run(["git", *_git_id(), "checkout", "-b", branch], cwd=dest_repo, check=True, capture_output=True)
+    happens when propagated content is already byte-identical to the far side.
+    """
+    subprocess.run(
+        ["git", *_git_id(), "checkout", "-b", branch],
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", *_git_id(), "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
 
-    nothing_staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=dest_repo).returncode == 0
+    nothing_staged = (
+        subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=dest_repo).returncode == 0
+    )
     if nothing_staged:
-        subprocess.run(["git", *_git_id(), "checkout", "-"], cwd=dest_repo, check=True, capture_output=True)
-        subprocess.run(["git", *_git_id(), "branch", "-D", branch], cwd=dest_repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", *_git_id(), "checkout", "-"],
+            cwd=dest_repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", *_git_id(), "branch", "-D", branch],
+            cwd=dest_repo,
+            check=True,
+            capture_output=True,
+        )
         return False
 
     commit_cmd = ["git", *_git_id(), "commit", "-m", message]
@@ -139,7 +176,12 @@ def reword_commit(dest_repo: Path, message: str) -> None:
     an amend of a not-yet-pushed local commit, not a rewrite of shared history.
     Safe to swap in pr_writer's title: it's built only from already-scrubbed
     far-side context, never the raw (untrusted) production commit message."""
-    subprocess.run(["git", *_git_id(), "commit", "--amend", "-m", message], cwd=dest_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", *_git_id(), "commit", "--amend", "-m", message],
+        cwd=dest_repo,
+        check=True,
+        capture_output=True,
+    )
 
 
 def discard_working_tree_changes(dest_repo: Path) -> None:
@@ -153,7 +195,9 @@ class PublishResult:
     message: str
 
 
-def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None) -> PublishResult:
+def open_pr(
+    dest_repo: Path, branch: str, base_branch: str, title: str, body: str, token: str | None = None
+) -> PublishResult:
     """Opens a PR via `gh` if a remote is configured; otherwise prints the PR body
     as a dry-run description (this demo's path) -- dry-run counts as success.
 
@@ -163,9 +207,12 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
     "No remote" (dry-run success) and "remote but no `gh`" (failure) are
     deliberately different outcomes -- the latter means a real publish was
     intended and the environment can't do it."""
-    has_remote = subprocess.run(
-        ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
-    ).stdout.strip() != ""
+    has_remote = (
+        subprocess.run(
+            ["git", "remote"], cwd=dest_repo, capture_output=True, text=True
+        ).stdout.strip()
+        != ""
+    )
 
     if not has_remote:
         return PublishResult(
@@ -188,11 +235,17 @@ def open_pr(dest_repo: Path, branch: str, base_branch: str, title: str, body: st
     gh_env = {**os.environ, "GH_TOKEN": token} if token else os.environ
     proc = subprocess.run(
         [
-            "gh", "pr", "create",
-            "--base", base_branch,
-            "--head", branch,
-            "--title", title,
-            "--body", body,
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            base_branch,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
         ],
         cwd=dest_repo,
         capture_output=True,

@@ -28,7 +28,9 @@ def test_exclude_drops_file(tmp_path):
 def test_redact_replaces_pattern(tmp_path):
     _write(tmp_path, "src/portmon/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
     rule = RedactRule(pattern=r"https://cag-mcp\.internal[^\s\"]*", replace="<MCP_ENDPOINT>")
-    desired, categories = apply(tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[rule])
+    desired, categories = apply(
+        tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[rule]
+    )
     assert "<MCP_ENDPOINT>" in desired["plugin/covenant.py"]
     assert "cag-mcp.internal" not in desired["plugin/covenant.py"]
     assert categories == []  # rule fired but has no `category` label
@@ -37,12 +39,19 @@ def test_redact_replaces_pattern(tmp_path):
 def test_redact_reports_triggered_category_only_when_a_rule_actually_fires(tmp_path):
     _write(tmp_path, "src/portmon/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
     _write(tmp_path, "src/portmon/other.py", "no endpoint here\n")
-    fired = RedactRule(pattern=r"https://cag-mcp\.internal[^\s\"]*", replace="<MCP_ENDPOINT>", category="internal_endpoint")
-    never_fires = RedactRule(pattern=r"NEVER_PRESENT_TOKEN", replace="<X>", category="tenant_config")
+    fired = RedactRule(
+        pattern=r"https://cag-mcp\.internal[^\s\"]*",
+        replace="<MCP_ENDPOINT>",
+        category="internal_endpoint",
+    )
+    never_fires = RedactRule(
+        pattern=r"NEVER_PRESENT_TOKEN", replace="<X>", category="tenant_config"
+    )
     desired, categories = apply(
         tmp_path, "src/portmon", "plugin", exclude=[], transform_rules=[fired, never_fires]
     )
-    assert categories == ["internal_endpoint"]  # never_fires's category is absent -- it never matched anything
+    # never_fires's category is absent -- it never matched anything
+    assert categories == ["internal_endpoint"]
 
 
 def test_whole_repo_mapping_never_walks_mechanical_dirs(tmp_path):

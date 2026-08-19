@@ -9,7 +9,17 @@ def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     subprocess.run(
-        ["git", "-c", "user.name=Jane Dev", "-c", "user.email=jane@example.com", "commit", "--allow-empty", "-m", "x"],
+        [
+            "git",
+            "-c",
+            "user.name=Jane Dev",
+            "-c",
+            "user.email=jane@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -22,7 +32,9 @@ def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):
 
 
 def _mapping(key, source, dest="dest/"):
-    return Mapping(key=key, source=source, dest=dest, break_check=BreakCheck(install="true", run="true"))
+    return Mapping(
+        key=key, source=source, dest=dest, break_check=BreakCheck(install="true", run="true")
+    )
 
 
 def test_match_hits_only_touched_mappings():

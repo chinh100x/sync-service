@@ -2,6 +2,7 @@
 Only the plumbing is shared -- what a failure *means* (fail-open vs. fail-closed)
 is decided entirely at the call site, not here.
 """
+
 from __future__ import annotations
 
 from typing import TypeVar
@@ -41,5 +42,7 @@ def structured_call(
     )
     parsed = response.output_parsed
     if parsed is None:
-        raise LLMCallFailed("model returned no usable structured output (refusal or empty response)")
+        raise LLMCallFailed(
+            "model returned no usable structured output (refusal or empty response)"
+        )
     return parsed

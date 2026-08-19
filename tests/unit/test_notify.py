@@ -2,6 +2,10 @@ from sync_service import notify
 
 
 def test_comment_on_commit_prints_and_also_posts_to_slack(monkeypatch, capsys):
+    # GITHUB_REPOSITORY is set automatically on every real GitHub Actions runner --
+    # without neutralizing it, this test's outcome depends on whether it happens to
+    # run locally (unset) or in real CI (always set), rather than being deterministic.
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
@@ -26,7 +30,9 @@ def test_comment_on_commit_links_the_sha_when_github_repository_is_set(monkeypat
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
-    result = notify.comment_on_commit("e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted")
+    result = notify.comment_on_commit(
+        "e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted"
+    )
 
     url = "https://github.com/chinh100x/prod/commit/e3369bc4f775216af1ccc45d2c1aa8098d5164b0"
     # Printed/returned: a bare URL -- GitHub Actions' own log viewer auto-linkifies
@@ -81,7 +87,8 @@ def test_pr_opened_dry_run_posts_the_title_with_no_fake_link(monkeypatch):
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
     notify.pr_opened(
-        "Prod", "Sync portmon changes",
+        "Prod",
+        "Sync portmon changes",
         "[dry-run: no remote configured] Would open PR sync/portmon/abc123 -> main\nTitle: ...",
     )
 

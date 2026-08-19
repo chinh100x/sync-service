@@ -7,6 +7,7 @@ Unlike `pr_writer.py` (cosmetic, fails *open*), this is a security gate and fail
 *closed*: any error — timeout, bad key, malformed output, content too large — is a
 hard block, never an implicit pass.
 """
+
 from __future__ import annotations
 
 import os

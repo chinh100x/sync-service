@@ -1,6 +1,7 @@
 """Scrub: exclude list + regex substitution. Mechanical, no AI judgment.
 Applies `redact`, walking `mapping.source` into `mapping.dest`.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

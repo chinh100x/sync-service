@@ -1,4 +1,4 @@
-.PHONY: install lint test check
+.PHONY: install lint format typecheck test check
 
 install:
 	uv sync --dev
@@ -6,7 +6,13 @@ install:
 lint:
 	uv run ruff check .
 
+format:
+	uv run ruff format .
+
+typecheck:
+	uv run pyright
+
 test:
 	uv run pytest -v
 
-check: lint test
+check: lint typecheck test

@@ -3,6 +3,7 @@
 Loads and validates a repo pair's sync/*.yaml. Fails fast on load
 (bad regex, overlapping dest paths) rather than mid-run.
 """
+
 from __future__ import annotations
 
 import re
@@ -87,6 +88,6 @@ class SyncConfig(BaseModel):
         return self
 
     @classmethod
-    def load(cls, path: str | Path) -> "SyncConfig":
+    def load(cls, path: str | Path) -> SyncConfig:
         raw = yaml.safe_load(Path(path).read_text())
         return cls.model_validate(raw)

@@ -23,13 +23,17 @@ packages = ["src/sync_service"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "pyright>=1.1",
 ]
 
+[tool.ruff]
+line-length = 100  # org standard (100x Engineering Standards, DAP-273)
+
 [tool.ruff.lint]
-# Default set (pyflakes + a slice of pycodestyle) is enough here -- unused
-# imports/names, undefined names, obvious bugs. Not layering on style rules
-# (import sorting, docstring conventions, etc.) beyond what's already the norm.
-select = ["E", "F"]
-# Comments/lines run long by design (explaining the why, not wrapped to a
-# column count) -- a real style choice here, not a gap to close.
-ignore = ["E501"]
+# Org standard (100x Engineering Standards, DAP-273): pyflakes, a slice of
+# pycodestyle, import sort, pyupgrade, bugbear.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "basic"
