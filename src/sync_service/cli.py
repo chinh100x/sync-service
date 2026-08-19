@@ -28,6 +28,7 @@ def run_mapping(
     gh_token: str | None,
     llm_pr_enabled: bool,
     llm_safety_review_enabled: bool,
+    llm_safety_review_additional_context: str | None,
     project_name: str | None,
 ) -> str:
     # Falls back to the mechanical `sync:mapping_key` prefix when project_name isn't set.
@@ -71,6 +72,7 @@ def run_mapping(
         verdict = safety_review.review(
             safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
             enabled=llm_safety_review_enabled,
+            additional_context=llm_safety_review_additional_context,
         )
         if verdict is not None:
             status = "passed" if verdict.passed else "blocked"
@@ -216,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
                     gh_token=gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,
+                    llm_safety_review_additional_context=config.llm_safety_review.additional_context,
                     project_name=config.project_name,
                 )
             )

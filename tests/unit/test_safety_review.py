@@ -69,6 +69,39 @@ def _raising_openai(monkeypatch):
     monkeypatch.setattr(llm_client, "OpenAI", factory)
 
 
+# --- _build_system_prompt: additive only, never a replacement ---------------------
+
+def test_build_system_prompt_with_no_additional_context_is_just_the_base():
+    prompt = safety_review._build_system_prompt(None)
+    assert prompt == f"{safety_review._SYSTEM_PROMPT}\n\n{safety_review._RETURN_INSTRUCTION}"
+
+
+def test_build_system_prompt_appends_additional_context_after_the_base():
+    prompt = safety_review._build_system_prompt("Also flag covenant threshold values.")
+
+    # The full base prompt survives untouched -- appending never edits or removes
+    # any of its existing safety instructions.
+    assert safety_review._SYSTEM_PROMPT in prompt
+    assert "Also flag covenant threshold values." in prompt
+    # The final "return structured output" instruction still comes last, after the
+    # custom addition -- it isn't buried in the middle of the appended text.
+    assert prompt.rstrip().endswith(safety_review._RETURN_INSTRUCTION)
+    assert prompt.index(safety_review._SYSTEM_PROMPT) < prompt.index("Also flag covenant")
+    assert prompt.index("Also flag covenant") < prompt.index(safety_review._RETURN_INSTRUCTION)
+
+
+def test_review_forwards_additional_context_into_the_actual_system_prompt(monkeypatch):
+    verdict = safety_review.SafetyVerdict(passed=True, categories=[], summary="fine")
+    calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    safety_review.review(
+        _make_context(), enabled=True, additional_context="Also flag deal codenames."
+    )
+
+    assert "Also flag deal codenames." in calls[0]["input"][0]["content"]
+
+
 # --- review(): disabled / misconfigured never touch the network -------------------
 
 
@@ -179,8 +212,9 @@ def test_malformed_output_raises_unavailable(monkeypatch):
 
 # --- cli.py integration: the gate actually halts (or doesn't) the real pipeline ---
 
-
-def _write_prod_oss_pair(tmp_path, *, llm_safety_review_enabled=True):
+def _write_prod_oss_pair(
+    tmp_path, *, llm_safety_review_enabled=True, llm_safety_review_additional_context=None
+):
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -188,6 +222,11 @@ def _write_prod_oss_pair(tmp_path, *, llm_safety_review_enabled=True):
     _git(prod, "init", "-q", "-b", "main")
     _git(oss, "init", "-q", "-b", "main")
 
+    additional_context_line = (
+        f'  additional_context: "{llm_safety_review_additional_context}"\n'
+        if llm_safety_review_additional_context
+        else ""
+    )
     _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
     _write(
         prod,
@@ -205,7 +244,8 @@ def _write_prod_oss_pair(tmp_path, *, llm_safety_review_enabled=True):
         "llm_pr:\n"
         "  enabled: false\n"
         "llm_safety_review:\n"
-        f"  enabled: {str(llm_safety_review_enabled).lower()}\n",
+        f"  enabled: {str(llm_safety_review_enabled).lower()}\n"
+        f"{additional_context_line}",
     )
     base = _commit(prod, "initial")
 
@@ -268,6 +308,25 @@ def test_enabled_and_passed_lets_the_pr_open(tmp_path, monkeypatch, capsys):
 
     assert exit_code == 0
     assert "dry-run" in capsys.readouterr().out  # got all the way to publish
+
+
+def test_config_additional_context_reaches_the_real_llm_call(tmp_path, monkeypatch):
+    prod, oss, base = _write_prod_oss_pair(
+        tmp_path, llm_safety_review_additional_context="Also flag covenant threshold values."
+    )
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    head = _commit(prod, "change")
+
+    verdict = safety_review.SafetyVerdict(passed=True, categories=[], summary="fine")
+    calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    exit_code = cli.main(["run", "--config", str(prod / "sync" / "monitoring.yaml"),
+                           "--source-repo", str(prod), "--dest-repo", str(oss),
+                           "--base", base, "--head", head])
+
+    assert exit_code == 0
+    assert "Also flag covenant threshold values." in calls[0]["input"][0]["content"]
 
 
 def test_enabled_and_blocked_halts_with_exit_0_not_a_tool_failure(tmp_path, monkeypatch):

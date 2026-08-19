@@ -130,6 +130,7 @@ jobs:
                 public_reason: "Shared monitoring implementation used by the open-source package."
             llm_safety_review:
               enabled: true
+              additional_context: "Also flag covenant threshold values and internal deal codenames."
             project_name: Prod
           target-repo: you-oss/portfolio-monitoring   # the OSS repo
           target-branch: main
@@ -147,6 +148,7 @@ What each piece does, and what happens if you leave it out:
 - **`public_reason`** — optional, human-authored line explaining why this mapping propagates; shows up in the PR body.
 - **Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, no config needed to enable it. Advisory only, never part of the sync/security decision: on any failure, timeout, or missing `OPENAI_API_KEY`, it falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) — OpenAI is never a hard dependency of the sync itself. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright.
 - **`llm_safety_review.enabled`** — **off by default**, shown above as `true`. The opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict is a hard halt, no PR, never treated as a pass. Catches what a regex can't — a real customer name, an internal codename, proprietary logic described in a comment. Uses the same `openai-api-key` as the PR writer.
+- **`llm_safety_review.additional_context`** — optional, project-specific "also watch for this" text — appended to the reviewer's fixed base prompt, never replacing it, so the built-in invariants (never quote the actual sensitive value, bias toward blocking when uncertain) can't be weakened by config.
 - **`project_name`** — optional human-readable label (e.g. `Prod`) used in Slack messages and as the commit author's display name; omit to fall back to a mechanical `label:mapping_key` prefix.
 - **`slack-webhook-url`/`slack-channel`** (`notify.py`/`slack.py`) — optional, best-effort; a missing or broken webhook never affects whether the sync itself succeeds. `slack-channel` only matters if the webhook's own Slack app honors a channel override.
 

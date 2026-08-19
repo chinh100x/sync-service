@@ -68,6 +68,12 @@ class SafetyReviewConfig(BaseModel):
     # Off by default. Unlike llm_pr, a failure here (missing key, API error, content
     # too large) is a hard halt, not a safe fallback -- see safety_review.py.
     enabled: bool = False
+    # Optional, project-specific "also flag this" note (e.g. "covenant threshold
+    # values", "internal deal codenames") -- appended to safety_review.py's fixed
+    # base prompt, never replacing it. What counts as sensitive differs per repo;
+    # the base prompt's own invariants (never quote the value, bias toward
+    # blocking) can't be weakened by this field.
+    additional_context: str | None = None
 
 
 class SyncConfig(BaseModel):
