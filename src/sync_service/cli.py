@@ -44,6 +44,11 @@ def run_mapping(
             f"[sync:{mapping.key}] PR already exists for this (mapping, head_sha) "
             "— skipping (idempotent re-run)"
         )
+        notify.comment_on_commit(
+            head_sha,
+            f"[{project_label}] {mapping.key}: PR already exists for this commit "
+            "— skipping (idempotent re-run).",
+        )
         return "skipped-exists"
 
     # Temporary working name -- candidate_diff() below needs a real commit on a real
@@ -55,6 +60,11 @@ def run_mapping(
     )
     if not desired:
         print(f"[sync:{mapping.key}] nothing under {mapping.source}/ to propagate")
+        notify.comment_on_commit(
+            head_sha,
+            f"[{project_label}] {mapping.key}: nothing under {mapping.source}/ to "
+            "propagate (everything there is excluded) — no-op, no PR.",
+        )
         return "empty"
     print(f"[sync:{mapping.key}] scrubbed {len(desired)} file(s) -> {mapping.dest}/")
 
@@ -122,6 +132,11 @@ def run_mapping(
     committed = publish.commit_to_branch(dest_repo, branch, message=commit_message, author=author)
     if not committed:
         print(f"[sync:{mapping.key}] nothing changed vs the OSS side — no PR")
+        notify.comment_on_commit(
+            head_sha,
+            f"[{project_label}] {mapping.key}: scrubbed content matches what's "
+            "already on the OSS side — nothing to commit, no PR.",
+        )
         return "unchanged"
 
     # The one place this tool tries to be human-readable rather than purely
@@ -202,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
         hits = diff.match(files, config.mappings)
 
         if not hits:
+            # No Slack/comment here, unlike every outcome inside run_mapping below --
+            # this fires on *every* push that doesn't touch any tracked mapping at
+            # all, which for a repo without a narrow path filter on its own trigger
+            # is most commits. There's no mapping-specific reason to report, and
+            # notifying here would turn Slack into a log of unrelated pushes.
             print("no mapping touched — no-op")
             return 0
 
