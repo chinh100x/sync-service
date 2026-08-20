@@ -1,4 +1,4 @@
-from sync_service import notify
+from sync_service.lib import notify
 
 
 def test_comment_on_commit_prints_and_also_posts_to_slack(monkeypatch, capsys):
@@ -71,7 +71,7 @@ def test_pr_opened_posts_a_slack_link_using_the_title_as_link_text(monkeypatch, 
 
 
 def test_pr_opened_falls_back_to_mechanical_label_when_project_name_unset(monkeypatch):
-    # cli.py computes this fallback (label:mapping_key) itself and passes it in as
+    # sync.py computes this fallback (label:mapping_key) itself and passes it in as
     # project_label when SyncConfig.project_name isn't set -- notify.py just prints
     # whatever project_label it's given, it doesn't know about the fallback rule.
     captured = []

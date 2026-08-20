@@ -1,6 +1,7 @@
 import subprocess
 
-from sync_service import cli, llm_client, safety_review
+from sync_service import sync
+from sync_service.lib import llm_client, safety_review
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -211,7 +212,7 @@ def test_malformed_output_raises_unavailable(monkeypatch):
         pass
 
 
-# --- cli.py integration: the gate actually halts (or doesn't) the real pipeline ---
+# --- sync.py integration: the gate actually halts (or doesn't) the real pipeline ---
 
 
 def _write_prod_oss_pair(
@@ -264,7 +265,7 @@ def test_disabled_by_default_never_calls_openai_and_sync_succeeds(tmp_path, monk
     _raising_openai(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -292,7 +293,7 @@ def test_enabled_and_passed_lets_the_pr_open(tmp_path, monkeypatch, capsys):
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -323,7 +324,7 @@ def test_config_additional_context_reaches_the_real_llm_call(tmp_path, monkeypat
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -354,7 +355,7 @@ def test_enabled_and_blocked_halts_with_exit_0_not_a_tool_failure(tmp_path, monk
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -385,7 +386,7 @@ def test_enabled_but_unavailable_is_a_real_failure_exit_1(tmp_path, monkeypatch)
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # enabled but misconfigured
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -413,7 +414,7 @@ def test_secret_scan_hit_short_circuits_before_safety_review_even_runs(tmp_path,
     _raising_openai(monkeypatch)  # would fail the test if constructed at all
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -445,7 +446,7 @@ def test_block_comment_never_leaks_more_than_the_categorical_summary(tmp_path, m
     _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(
+    sync.main(
         [
             "run",
             "--config",

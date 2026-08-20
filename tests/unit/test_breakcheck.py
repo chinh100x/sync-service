@@ -1,7 +1,7 @@
 import os
 
-from sync_service.breakcheck import run
-from sync_service.config import BreakCheck
+from sync_service.lib.breakcheck import run
+from sync_service.lib.config import BreakCheck
 
 
 def test_passes_when_both_steps_succeed(tmp_path):

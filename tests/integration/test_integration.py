@@ -1,4 +1,4 @@
-"""End-to-end coverage through cli.main() for scenarios no other test file
+"""End-to-end coverage through sync.main() for scenarios no other test file
 exercises at the orchestration level: multiple mappings in one run, the
 no-divergence-tracking overwrite behavior, a break-check halt/revert/retry
 cycle, and a no-op run. Replaces demo/run_demo.py, which only printed these
@@ -9,7 +9,7 @@ actually fails CI.
 import re
 import subprocess
 
-from sync_service import cli
+from sync_service import sync
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -76,7 +76,7 @@ def _init_pair(tmp_path):
 
 
 def _run(prod, oss, base, head):
-    return cli.main(
+    return sync.main(
         [
             "run",
             "--config",

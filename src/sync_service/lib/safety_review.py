@@ -121,7 +121,7 @@ def review(
         )
 
     model = os.environ.get("OPENAI_SAFETY_MODEL") or _DEFAULT_MODEL
-    # Every failure below becomes the same SafetyReviewUnavailable -- cli.py halts on it.
+    # Every failure below becomes the same SafetyReviewUnavailable -- sync.py halts on it.
     try:
         return llm_client.structured_call(
             api_key=api_key,
