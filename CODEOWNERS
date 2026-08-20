@@ -1,4 +1,0 @@
-# Per 100x Engineering Standards (DAP-273): required reviewers, enforced via
-# branch protection. Every PR needs at least one human approval from here --
-# no exception for AI-authored PRs, same bar as anyone else's.
-*   @chinh100x

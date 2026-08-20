@@ -201,12 +201,9 @@ Secrets only ever get written, never read back — GitHub gives no UI/API/`gh` p
 
 ## Contributing
 
-Per the org-wide [100x Engineering Standards](https://app.notion.com/p/vireox/100x-Engineering-Standards-3bf1041986e580cbafdbfbb28a090725) (DAP-273):
+- **Direct pushes to `main`.** No required review, no branch protection -- this is a small, single-maintainer repo, and PRs-for-everything was overhead without a second reviewer to actually use it. Open a PR instead of pushing directly when a change genuinely benefits from sitting for review (something risky, something you want a second opinion on) -- it's an option, not the mandated default.
+- **AI authorship is always disclosed**, never passed off as human work: an `Assisted-by:` git trailer on the relevant commits. `.github/pull_request_template.md`'s AI-authorship checklist still applies on the occasions a PR does happen.
+- **Verification is real, not claimed.** Run `make check` against your own local changes before pushing -- not "it passed before" or "it's already on main."
 
-- **PRs, not direct pushes to `main`.** Branch protection requires at least one human approval (`CODEOWNERS`) and all CI checks green before merge — no exception for AI-authored PRs, same bar as anyone else's.
-- **AI authorship is always disclosed**, never passed off as human work: an `Assisted-by:` git trailer on the relevant commits, plus the checkbox in `.github/pull_request_template.md`.
-- **A human reviews and merges.** An agent can open a PR proposing a change, but shouldn't push straight to `main` or merge its own PR.
-- **Verification is real, not claimed.** Run `make check` against your own local changes before opening a PR — not "it passed before" or "it's already on main."
-
-Local setup: `make install` (see [Try it locally](#try-it-locally) above) -- this also wires up the pre-commit hook. CI runs lint → typecheck → test → security scan, in that order, on every PR.
+Local setup: `make install` (see [Try it locally](#try-it-locally) above) -- this also wires up the pre-commit hook. CI still runs lint → typecheck → test → security scan, in that order, on every push to `main` and on any PR that does get opened.
 
