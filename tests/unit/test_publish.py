@@ -1,6 +1,6 @@
 import subprocess
 
-from sync_service import publish
+from sync_service.lib import publish
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -50,7 +50,7 @@ def _is_ancestor(repo, maybe_ancestor, branch):
 
 def test_checkout_base_prevents_one_mapping_stacking_on_another(tmp_path):
     # Simulates processing two mappings against the same far_repo in one run, the
-    # way cli.py's main() loop does. Without checkout_base() between them, the
+    # way sync.py's main() loop does. Without checkout_base() between them, the
     # second mapping's branch would have the first's commit as an ancestor.
     repo = tmp_path / "repo"
     _init_repo(repo)

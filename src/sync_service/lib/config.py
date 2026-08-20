@@ -84,7 +84,7 @@ class SyncConfig(BaseModel):
     llm_pr: LLMPRConfig = LLMPRConfig()
     llm_safety_review: SafetyReviewConfig = SafetyReviewConfig()
     # Human-readable label for Slack notifications (e.g. "Prod"); unset falls back
-    # to the mechanical `label:mapping_key` prefix (see cli.py's run_direction).
+    # to the mechanical `label:mapping_key` prefix (see sync.py's run_mapping).
     project_name: str | None = None
 
     @model_validator(mode="after")
