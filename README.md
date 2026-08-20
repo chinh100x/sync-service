@@ -45,11 +45,10 @@ Makefile            `make install` / `make lint` / `make format` / `make typeche
 
 ```bash
 make install
-pre-commit install   # optional but recommended -- see below
 ```
-`make install` creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`, `pyright`. No GitHub token, no `gitleaks` binary, no real repos needed for any of this.
+Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`, `pyright`, `pre-commit` -- then runs `pre-commit install` itself, so the hook below is active immediately. No GitHub token, no `gitleaks` binary, no real repos, no separate global `pre-commit` install needed for any of this.
 
-`pre-commit install` wires up `.pre-commit-config.yaml`: on every commit, `ruff format` and an import-sort fix run automatically, plus `detect-secrets` checks the diff against `.secrets.baseline`. Needs [`pre-commit`](https://pre-commit.com/) itself installed once (`uv tool install pre-commit`, or any other way you'd normally install a Python tool). The full lint rule set (unused imports/names, undefined names, bugbear) isn't part of this hook — it's a CI gate (below), not a commit blocker.
+The hook it wires up (`.pre-commit-config.yaml`): on every commit, `ruff format` and an import-sort fix run automatically, plus `detect-secrets` checks the diff against `.secrets.baseline`. The full lint rule set (unused imports/names, undefined names, bugbear) isn't part of this hook — it's a CI gate (below), not a commit blocker.
 
 ### 2. Lint, type-check, and run the tests
 
@@ -209,5 +208,5 @@ Per the org-wide [100x Engineering Standards](https://app.notion.com/p/vireox/10
 - **A human reviews and merges.** An agent can open a PR proposing a change, but shouldn't push straight to `main` or merge its own PR.
 - **Verification is real, not claimed.** Run `make check` against your own local changes before opening a PR — not "it passed before" or "it's already on main."
 
-Local setup: `make install && pre-commit install` (see [Try it locally](#try-it-locally) above). CI runs lint → typecheck → test → security scan, in that order, on every PR.
+Local setup: `make install` (see [Try it locally](#try-it-locally) above) -- this also wires up the pre-commit hook. CI runs lint → typecheck → test → security scan, in that order, on every PR.
 
