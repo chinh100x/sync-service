@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from sync_service.config import RedactRule
-from sync_service.scrub import apply
+from sync_service.lib.config import RedactRule
+from sync_service.lib.scrub import apply
 
 
 def _write(root: Path, rel: str, text: str) -> None:

@@ -21,7 +21,7 @@ def _basic_auth_header(token: str) -> str:
 
 
 def _git_id() -> list[str]:
-    """Commit identity, read lazily (not a module constant) so cli.py can set a
+    """Commit identity, read lazily (not a module constant) so sync.py can set a
     project-specific default via os.environ after this module is imported."""
     name = os.environ.get("SYNC_SERVICE_COMMIT_NAME", "sync-service[bot]")
     email = os.environ.get("SYNC_SERVICE_COMMIT_EMAIL", "sync-service@users.noreply.github.com")

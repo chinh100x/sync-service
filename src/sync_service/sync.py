@@ -14,8 +14,8 @@ import os
 import sys
 from pathlib import Path
 
-from . import breakcheck, diff, notify, pr_writer, publish, safety_review, scrub, secretscan
-from .config import Mapping, SyncConfig
+from .lib import breakcheck, diff, notify, pr_writer, publish, safety_review, scrub, secretscan
+from .lib.config import Mapping, SyncConfig
 
 
 def _halt(head_sha: str, message: str, outcome: str) -> str:

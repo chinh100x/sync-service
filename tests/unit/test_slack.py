@@ -1,6 +1,6 @@
 import json
 
-from sync_service import slack
+from sync_service.lib import slack
 
 
 class _FakeHTTPResponse:

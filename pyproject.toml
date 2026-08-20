@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sync-service = "sync_service.cli:main"
+sync-service = "sync_service.sync:main"
 
 [build-system]
 requires = ["hatchling"]
