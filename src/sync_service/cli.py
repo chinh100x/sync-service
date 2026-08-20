@@ -18,6 +18,15 @@ from . import breakcheck, diff, notify, pr_writer, publish, safety_review, scrub
 from .config import Mapping, SyncConfig
 
 
+def _halt(head_sha: str, message: str, outcome: str) -> str:
+    """Every halt notifies the same way (comment on the source commit + Slack)
+    before returning its outcome string -- collapses that two-line pattern to one
+    call site per gate. Skipped for the one halt (breakcheck) that has a side
+    effect between notifying and returning."""
+    notify.comment_on_commit(head_sha, message)
+    return outcome
+
+
 def run_mapping(
     *,
     mapping: Mapping,
@@ -37,6 +46,7 @@ def run_mapping(
     # on its own branch, nesting this mapping's commit inside that one's PR.
     publish.checkout_base(dest_repo, base_branch)
 
+    # --- Idempotency: has this exact (mapping, head_sha) already been proposed? ---
     # Tracked via a dedicated ref, not the branch name -- the final name is a clean,
     # title-derived slug with no sha in it, so it can't double as the idempotency key.
     if publish.already_synced(dest_repo, mapping.key, head_sha):
@@ -44,40 +54,43 @@ def run_mapping(
             f"[sync:{mapping.key}] PR already exists for this (mapping, head_sha) "
             "— skipping (idempotent re-run)"
         )
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: PR already exists for this commit "
             "— skipping (idempotent re-run).",
+            "skipped-exists",
         )
-        return "skipped-exists"
 
     # Temporary working name -- candidate_diff() below needs a real commit on a real
     # branch before the title (and final branch name) can be generated.
     branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
 
+    # --- scrub.py: exclude + redact. Mechanical, no judgment. ---
     desired, scrubbed_categories = scrub.apply(
         source_repo, mapping.source, mapping.dest, mapping.exclude, mapping.redact
     )
     if not desired:
         print(f"[sync:{mapping.key}] nothing under {mapping.source}/ to propagate")
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: nothing under {mapping.source}/ to "
             "propagate (everything there is excluded) — no-op, no PR.",
+            "empty",
         )
-        return "empty"
     print(f"[sync:{mapping.key}] scrubbed {len(desired)} file(s) -> {mapping.dest}/")
 
+    # --- secretscan.py: the hard secret-scan gate. ---
     hits = secretscan.scan(desired)
     if hits:
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] secret scan hit in {mapping.key}: "
             f"{hits[0]['rule']} in {hits[0]['path']}. Halted, no PR.",
+            "secret-halt",
         )
-        return "secret-halt"
 
-    # Fails *closed*: SafetyReviewUnavailable is a hard halt, never an implicit pass.
+    # --- safety_review.py: the semantic gate. Fails *closed* -- the opposite of
+    # pr_writer.py's fallback-on-any-failure behavior further down. ---
     try:
         verdict = safety_review.review(
             safety_review.SafetyReviewContext(mapping_key=mapping.key, files=desired),
@@ -88,33 +101,38 @@ def run_mapping(
             status = "passed" if verdict.passed else "blocked"
             print(f"[safety-review:{mapping.key}] {status}")
     except safety_review.SafetyReviewUnavailable as exc:
-        notify.comment_on_commit(
+        # A hard halt, never an implicit pass.
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: semantic safety review unavailable "
             f"({exc}) -- halted out of caution, no PR.",
+            "safety-review-error",
         )
-        return "safety-review-error"
 
     if verdict is not None and not verdict.passed:
         categories = f" (categories: {', '.join(verdict.categories)})" if verdict.categories else ""
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: semantic safety review blocked this change: "
             f"{verdict.summary}{categories}. Halted, no PR.",
+            "safety-review-halt",
         )
-        return "safety-review-halt"
 
     for rel_path, text in desired.items():
         dest_file = dest_repo / rel_path
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         dest_file.write_text(text)
 
+    # --- breakcheck.py: the "still works" check. ---
     if mapping.break_check is not None:
         check = breakcheck.run(dest_repo, mapping.break_check)
         if not check.passed:
             # Fenced so the raw command output renders as a code block, not a wall
             # of plain text -- both GitHub (Markdown) and Slack (mrkdwn) use the
             # same ``` syntax, so one format serves both channels.
+            #
+            # Not routed through _halt(): discard_working_tree_changes must run
+            # between the notify call and the return, unlike every other gate here.
             notify.comment_on_commit(
                 head_sha,
                 f"[{project_label}] {mapping.key}: break check failed at "
@@ -123,6 +141,7 @@ def run_mapping(
             publish.discard_working_tree_changes(dest_repo)
             return "breakcheck-halt"
 
+    # --- publish.py: commit the scrubbed result onto the working branch. ---
     # Never the raw production commit message -- free-form human text that never
     # goes through scrub/secretscan. Just a placeholder: reword_commit below
     # replaces it with the generated title before anything is pushed.
@@ -132,16 +151,45 @@ def run_mapping(
     committed = publish.commit_to_branch(dest_repo, branch, message=commit_message, author=author)
     if not committed:
         print(f"[sync:{mapping.key}] nothing changed vs the OSS side — no PR")
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: scrubbed content matches what's "
             "already on the OSS side — nothing to commit, no PR.",
+            "unchanged",
         )
-        return "unchanged"
 
-    # The one place this tool tries to be human-readable rather than purely
-    # mechanical. Built only from already-scrubbed, already-validated OSS-side
-    # content; falls back to a deterministic title/body on any failure.
+    # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
+    return _finalize_and_publish(
+        mapping=mapping,
+        dest_repo=dest_repo,
+        base_branch=base_branch,
+        branch=branch,
+        head_sha=head_sha,
+        project_label=project_label,
+        desired=desired,
+        scrubbed_categories=scrubbed_categories,
+        llm_pr_enabled=llm_pr_enabled,
+        gh_token=gh_token,
+    )
+
+
+def _finalize_and_publish(
+    *,
+    mapping: Mapping,
+    dest_repo: Path,
+    base_branch: str,
+    branch: str,
+    head_sha: str,
+    project_label: str,
+    desired: dict[str, str],
+    scrubbed_categories: list[str],
+    llm_pr_enabled: bool,
+    gh_token: str | None,
+) -> str:
+    """The one place this tool tries to be human-readable rather than purely
+    mechanical. Built only from already-scrubbed, already-validated OSS-side
+    content; falls back to a deterministic title/body on any failure -- pr_writer
+    fails *open*, the opposite of safety_review's fail-closed behavior above."""
     context = pr_writer.PRContext(
         mapping_key=mapping.key,
         public_reason=mapping.public_reason,
@@ -165,11 +213,11 @@ def run_mapping(
     result = publish.open_pr(dest_repo, branch, base_branch, title, body, token=gh_token)
     print(f"[sync:{mapping.key}] {result.message}")
     if not result.success:
-        notify.comment_on_commit(
+        return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
+            "publish-failed",
         )
-        return "publish-failed"
     # Only mark synced once publish actually succeeded -- a halt/failure must
     # still be retried on the next run, not silently skipped.
     publish.record_synced(dest_repo, mapping.key, head_sha, token=gh_token)
@@ -213,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
                 "SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com"
             )
 
+        # --- diff.py: what changed, which mappings matched (the trigger). ---
         files = diff.changed_files(source_repo, args.base, args.head)
         hits = diff.match(files, config.mappings)
 
