@@ -20,20 +20,21 @@ conventions from any other repo, but does follow the org-wide
 
 ```
 src/sync_service/
-├── cli.py          entrypoint: `sync-service run --config ... --source-repo ... --dest-repo ... --base ... --head ...`
-├── config.py       pydantic schema for the sync/*.yaml mapping config
-├── diff.py         which mappings did base..head touch (the trigger)
-├── scrub.py        exclude list + regex substitution (redact)
-├── secretscan.py   built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
-├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
-├── llm_client.py   shared OpenAI structured-output call used by pr_writer.py/safety_review.py
-├── pr_writer.py    LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
-├── safety_review.py  optional LLM semantic safety review. Off by default; fails *closed* (halts) on any error — a security gate, not cosmetic.
-├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
-├── notify.py       comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
-└── slack.py        best-effort Slack Incoming Webhook post; never raises, off unless configured
+├── sync.py         entrypoint: `sync-service run --config ... --source-repo ... --dest-repo ... --base ... --head ...`
+└── lib/
+    ├── config.py       pydantic schema for the sync/*.yaml mapping config
+    ├── diff.py         which mappings did base..head touch (the trigger)
+    ├── scrub.py        exclude list + regex substitution (redact)
+    ├── secretscan.py   built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
+    ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
+    ├── llm_client.py   shared OpenAI structured-output call used by pr_writer.py/safety_review.py
+    ├── pr_writer.py    LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
+    ├── safety_review.py  LLM semantic safety review. On by default; fails *closed* (halts) on any error — a security gate, not cosmetic.
+    ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
+    ├── notify.py       comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
+    └── slack.py        best-effort Slack Incoming Webhook post; never raises, off unless configured
 tests/unit/         one test file per module
-tests/integration/  full end-to-end scenarios through cli.main() against two local git repos — no GitHub needed
+tests/integration/  full end-to-end scenarios through sync.main() against two local git repos — no GitHub needed
 action.yml          composite GitHub Action wrapping the CLI, for real deployment
 Makefile            `make install` / `make lint` / `make format` / `make typecheck` / `make test` / `make check` (lint + typecheck + test) — same stages CI runs, in the same order
 ```
@@ -55,14 +56,14 @@ pre-commit install   # optional but recommended -- see below
 ```bash
 make check   # make lint + make typecheck + make test
 ```
-Lint is `ruff` (`select = ["E", "F", "I", "UP", "B"]`, line-length 100). Type checking is `pyright` in basic mode. Tests: 84 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `cli.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs these same three stages as separate, ordered jobs, plus a fourth security-scan stage (Trufflehog/Trivy/Semgrep) on every push/PR.
+Lint is `ruff` (`select = ["E", "F", "I", "UP", "B"]`, line-length 100). Type checking is `pyright` in basic mode. Tests: 84 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `sync.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs these same three stages as separate, ordered jobs, plus a fourth security-scan stage (Trufflehog/Trivy/Semgrep) on every push/PR.
 
 ### 3. See one end-to-end scenario narrated, with output
 
 ```bash
 uv run pytest tests/integration/ -v -s
 ```
-`-s` shows each scenario's real `cli.main()` output (scrubbing, redaction, PR dry-run text) instead of just pass/fail.
+`-s` shows each scenario's real `sync.main()` output (scrubbing, redaction, PR dry-run text) instead of just pass/fail.
 
 ### 4. Drive the CLI yourself, one command at a time
 

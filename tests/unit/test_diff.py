@@ -1,7 +1,7 @@
 import subprocess
 
-from sync_service.config import BreakCheck, Mapping
-from sync_service.diff import commit_author, match
+from sync_service.lib.config import BreakCheck, Mapping
+from sync_service.lib.diff import commit_author, match
 
 
 def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):

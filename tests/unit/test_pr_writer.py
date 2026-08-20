@@ -1,6 +1,7 @@
 import subprocess
 
-from sync_service import cli, llm_client, pr_writer
+from sync_service import sync
+from sync_service.lib import llm_client, pr_writer
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 SENSITIVE_COMMIT_TEXT = "Rocky Mountain CAG SharePoint sync"
@@ -301,7 +302,7 @@ def test_render_markdown_change_types_checklist_is_a_closed_set():
     assert "- [x] 🛠 Refactor" in checklist
 
 
-# --- cli.py integration: what actually gets sent to the model ---------------------
+# --- sync.py integration: what actually gets sent to the model ---------------------
 
 
 def _write_prod_oss_pair(tmp_path, *, redact_rule="", exclude_extra=""):
@@ -348,7 +349,7 @@ def test_raw_production_commit_message_never_reaches_openai(tmp_path, monkeypatc
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(
+    sync.main(
         [
             "run",
             "--config",
@@ -381,7 +382,7 @@ def test_excluded_production_files_never_reach_openai(tmp_path, monkeypatch):
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(
+    sync.main(
         [
             "run",
             "--config",
@@ -417,7 +418,7 @@ def test_scrubbed_sensitive_values_never_reach_openai(tmp_path, monkeypatch):
     calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    cli.main(
+    sync.main(
         [
             "run",
             "--config",
@@ -448,7 +449,7 @@ def test_secret_hit_never_calls_openai(tmp_path, monkeypatch):
     _raising_openai(monkeypatch)  # would fail the test if constructed at all
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    exit_code = cli.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
