@@ -46,23 +46,18 @@ Makefile            `make install` / `make lint` / `make format` / `make typeche
 ```bash
 make install
 ```
-Creates `.venv/` and installs `pydantic`, `pyyaml`, `pytest`, `ruff`, `pyright`, `pre-commit` -- then runs `pre-commit install` itself, so the hook below is active immediately. No GitHub token, no `gitleaks` binary, no real repos, no separate global `pre-commit` install needed for any of this.
-
-The hook it wires up (`.pre-commit-config.yaml`): on every commit, `ruff format` and an import-sort fix run automatically, plus `detect-secrets` checks the diff against `.secrets.baseline`. The full lint rule set (unused imports/names, undefined names, bugbear) isn't part of this hook — it's a CI gate (below), not a commit blocker.
 
 ### 2. Lint, type-check, and run the tests
 
 ```bash
 make check   # make lint + make typecheck + make test
 ```
-Lint is `ruff` (`select = ["E", "F", "I", "UP", "B"]`, line-length 100). Type checking is `pyright` in basic mode. Tests: 84 total, no GitHub involved — unit tests per module in `tests/unit/`, plus `tests/integration/` for full runs through `sync.main()` (multiple mappings in one commit, the overwrite behavior, a break-check halt/revert/retry cycle, and a no-op run). CI (`.github/workflows/ci.yml`) runs these same three stages as separate, ordered jobs, plus a fourth security-scan stage (Trufflehog/Trivy/Semgrep) on every push/PR.
 
-### 3. See one end-to-end scenario narrated, with output
+### 3. Test
 
 ```bash
-uv run pytest tests/integration/ -v -s
+make test
 ```
-`-s` shows each scenario's real `sync.main()` output (scrubbing, redaction, PR dry-run text) instead of just pass/fail.
 
 ### 4. Drive the CLI yourself, one command at a time
 
