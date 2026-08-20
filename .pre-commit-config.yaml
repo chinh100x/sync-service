@@ -13,6 +13,10 @@ repos:
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
+      # No --baseline file -- known-fake fixtures (test SHAs, a placeholder
+      # sk-test key, deliberately fake secret-shaped strings used to test the
+      # scanner itself) are allowlisted inline with `# pragma: allowlist
+      # secret` instead, so there's no separate JSON file to keep in sync as
+      # new fixtures get added.
       - id: detect-secrets
-        args: ["--baseline", ".secrets.baseline"]
         exclude: package.lock.json

@@ -195,15 +195,15 @@ def test_already_synced_is_false_until_recorded(tmp_path):
     publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
     publish.rename_branch(repo, "some-clean-title-slug")
 
-    assert not publish.already_synced(repo, "x", "abc123def456")
+    assert not publish.already_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
 
-    publish.record_synced(repo, "x", "abc123def456")
+    publish.record_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
 
     # Keyed on (mapping_key, head_sha), not on the branch name at all -- the final
     # branch name carries no sha for this to match against anymore.
-    assert publish.already_synced(repo, "x", "abc123def456")
-    assert not publish.already_synced(repo, "y", "abc123def456")  # different mapping
-    assert not publish.already_synced(repo, "x", "def456abc123")  # different sha
+    assert publish.already_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
+    assert not publish.already_synced(repo, "y", "abc123def456")  # pragma: allowlist secret
+    assert not publish.already_synced(repo, "x", "def456abc123")  # pragma: allowlist secret
 
 
 def test_record_synced_pushes_the_tracking_ref_when_a_remote_is_configured(tmp_path):
@@ -219,12 +219,13 @@ def test_record_synced_pushes_the_tracking_ref_when_a_remote_is_configured(tmp_p
     _git(pusher, "remote", "add", "origin", str(bare))
     _git(pusher, "push", "-q", "-u", "origin", "main")
 
-    publish.record_synced(pusher, "x", "abc123def456")
+    publish.record_synced(pusher, "x", "abc123def456")  # pragma: allowlist secret
 
     fresh = tmp_path / "fresh"
     subprocess.run(["git", "clone", "-q", str(bare), str(fresh)], check=True)
 
-    assert publish.already_synced(fresh, "x", "abc123def456") is True  # remote-only, not local
+    # remote-only, not local
+    assert publish.already_synced(fresh, "x", "abc123def456") is True  # pragma: allowlist secret
     assert publish.already_synced(fresh, "x", "does-not-exist") is False
 
 
@@ -233,8 +234,8 @@ def test_record_synced_is_local_only_without_a_remote(tmp_path):
     _init_repo(repo)
     # No remote configured -- the dry-run scenario, same as the demo. Should not
     # raise just because there's nothing to push to.
-    publish.record_synced(repo, "x", "abc123def456")
-    assert publish.already_synced(repo, "x", "abc123def456")
+    publish.record_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
+    assert publish.already_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
 
 
 def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):

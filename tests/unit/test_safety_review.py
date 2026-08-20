@@ -408,7 +408,8 @@ def test_enabled_but_unavailable_is_a_real_failure_exit_1(tmp_path, monkeypatch)
 
 def test_secret_scan_hit_short_circuits_before_safety_review_even_runs(tmp_path, monkeypatch):
     prod, oss, base = _write_prod_oss_pair(tmp_path)
-    _write(prod, "src/portmon/covenant.py", 'AKIA_KEY = "AKIAABCDEFGHIJKLMNOP"\n')
+    fake_key_content = 'AKIA_KEY = "AKIAABCDEFGHIJKLMNOP"\n'  # pragma: allowlist secret
+    _write(prod, "src/portmon/covenant.py", fake_key_content)
     head = _commit(prod, "oops, a real-looking key")
 
     _raising_openai(monkeypatch)  # would fail the test if constructed at all

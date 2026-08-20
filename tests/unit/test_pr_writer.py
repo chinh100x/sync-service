@@ -165,7 +165,9 @@ def test_openai_writer_never_receives_validation_field_names_as_facts_to_assert(
     # This just documents that even a "helpful" model claiming a specific outcome
     # doesn't matter: see the injection-resistance test below for the actual guarantee.
     captured = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(_generated()))
-    pr_writer.OpenAIPRWriter(api_key="sk-test").generate(_make_context())
+    pr_writer.OpenAIPRWriter(
+        api_key="sk-test"  # pragma: allowlist secret
+    ).generate(_make_context())
     user_msg = captured[0]["input"][1]["content"]
     assert "passed" not in user_msg.lower()  # validation summary is never sent to the model at all
 
@@ -314,7 +316,11 @@ def _write_prod_oss_pair(tmp_path, *, redact_rule="", exclude_extra=""):
     _git(oss, "init", "-q", "-b", "main")
 
     _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
-    _write(prod, "src/portmon/internal_reporting.py", "SECRET_CONTEXT = 'do not ship'\n")
+    _write(
+        prod,
+        "src/portmon/internal_reporting.py",
+        "SECRET_CONTEXT = 'do not ship'\n",  # pragma: allowlist secret
+    )
     _write(
         prod,
         "sync/monitoring.yaml",
@@ -374,7 +380,9 @@ def test_raw_production_commit_message_never_reaches_openai(tmp_path, monkeypatc
 def test_excluded_production_files_never_reach_openai(tmp_path, monkeypatch):
     prod, oss, base = _write_prod_oss_pair(tmp_path)
     _write(
-        prod, "src/portmon/internal_reporting.py", "SECRET_CONTEXT = 'changed, still excluded'\n"
+        prod,
+        "src/portmon/internal_reporting.py",
+        "SECRET_CONTEXT = 'changed, still excluded'\n",  # pragma: allowlist secret
     )
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
     head = _commit(prod, "change")
@@ -443,7 +451,8 @@ def test_scrubbed_sensitive_values_never_reach_openai(tmp_path, monkeypatch):
 
 def test_secret_hit_never_calls_openai(tmp_path, monkeypatch):
     prod, oss, base = _write_prod_oss_pair(tmp_path)
-    _write(prod, "src/portmon/covenant.py", 'AKIA_KEY = "AKIAABCDEFGHIJKLMNOP"\n')
+    fake_key_content = 'AKIA_KEY = "AKIAABCDEFGHIJKLMNOP"\n'  # pragma: allowlist secret
+    _write(prod, "src/portmon/covenant.py", fake_key_content)
     head = _commit(prod, "oops, a real-looking key")
 
     _raising_openai(monkeypatch)  # would fail the test if constructed at all

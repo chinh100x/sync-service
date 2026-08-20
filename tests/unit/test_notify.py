@@ -9,9 +9,10 @@ def test_comment_on_commit_prints_and_also_posts_to_slack(monkeypatch, capsys):
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
-    result = notify.comment_on_commit("abc123def456789", "something halted")
+    fake_sha = "abc123def456789"  # pragma: allowlist secret
+    result = notify.comment_on_commit(fake_sha, "something halted")
 
-    assert "abc123def456"[:12] in result
+    assert "abc123def456"[:12] in result  # pragma: allowlist secret
     assert "something halted" in result
     assert captured == [result]  # the same message, not a re-derived one
     assert result in capsys.readouterr().out
@@ -31,7 +32,8 @@ def test_comment_on_commit_links_the_sha_when_github_repository_is_set(monkeypat
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
     result = notify.comment_on_commit(
-        "e3369bc4f775216af1ccc45d2c1aa8098d5164b0", "something halted"
+        "e3369bc4f775216af1ccc45d2c1aa8098d5164b0",  # pragma: allowlist secret
+        "something halted",
     )
 
     url = "https://github.com/chinh100x/prod/commit/e3369bc4f775216af1ccc45d2c1aa8098d5164b0"
@@ -50,9 +52,10 @@ def test_comment_on_commit_falls_back_to_a_bare_sha_without_github_repository(mo
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     monkeypatch.setattr(notify.slack, "post", lambda text: True)
 
-    result = notify.comment_on_commit("abc123def456789", "something halted")
+    fake_sha = "abc123def456789"  # pragma: allowlist secret
+    result = notify.comment_on_commit(fake_sha, "something halted")
 
-    assert "abc123def456" in result
+    assert "abc123def456" in result  # pragma: allowlist secret
     assert "https://" not in result  # nothing to link to locally/in tests
 
 
