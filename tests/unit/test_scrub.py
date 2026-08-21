@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 from sync_service.lib.config import RedactRule
-from sync_service.lib.scrub import apply, redact_paths
+from sync_service.lib.scrub import apply, redact_text
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -111,24 +111,21 @@ def test_untracked_and_gitignored_files_never_propagate(tmp_path):
     assert set(desired) == {".gitignore", "src/app.py"}
 
 
-# --- redact_paths(): the same substitution, applied to files patch.py's replay
-# path already wrote to disk, instead of a fresh source-tree walk ------------------
+# --- redact_text(): the same substitution, against a plain string -- what
+# patch.py's per-commit replay path redacts in memory before ever writing
+# anything into dest_repo, instead of a fresh source-tree walk -------------------
 
 
-def test_redact_paths_rewrites_a_matching_file_in_place(tmp_path):
-    _write(tmp_path, "plugin/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
-
+def test_redact_text_rewrites_a_matching_value():
     rule = RedactRule(pattern=r"https://cag-mcp\.internal[^\s\"]*", replace="<MCP_ENDPOINT>")
-    categories = redact_paths(tmp_path, ["plugin/covenant.py"], [rule])
 
-    assert (tmp_path / "plugin" / "covenant.py").read_text() == 'ENDPOINT = "<MCP_ENDPOINT>"\n'
+    text, categories = redact_text('ENDPOINT = "https://cag-mcp.internal/v1/x"\n', [rule])
+
+    assert text == 'ENDPOINT = "<MCP_ENDPOINT>"\n'
     assert categories == []  # rule fired but has no `category` label
 
 
-def test_redact_paths_reports_triggered_category_only_when_a_rule_actually_fires(tmp_path):
-    _write(tmp_path, "plugin/covenant.py", 'ENDPOINT = "https://cag-mcp.internal/v1/x"\n')
-    _write(tmp_path, "plugin/other.py", "no endpoint here\n")
-
+def test_redact_text_reports_triggered_category_only_when_a_rule_actually_fires():
     fired = RedactRule(
         pattern=r"https://cag-mcp\.internal[^\s\"]*",
         replace="<MCP_ENDPOINT>",
@@ -137,17 +134,10 @@ def test_redact_paths_reports_triggered_category_only_when_a_rule_actually_fires
     never_fires = RedactRule(
         pattern=r"NEVER_PRESENT_TOKEN", replace="<X>", category="tenant_config"
     )
-    categories = redact_paths(
-        tmp_path, ["plugin/covenant.py", "plugin/other.py"], [fired, never_fires]
+
+    text, categories = redact_text(
+        'ENDPOINT = "https://cag-mcp.internal/v1/x"\n', [fired, never_fires]
     )
 
     assert categories == ["internal_endpoint"]
-    assert (tmp_path / "plugin" / "other.py").read_text() == "no endpoint here\n"
-
-
-def test_redact_paths_skips_a_path_deleted_by_the_patch(tmp_path):
-    # patch.py's replay applies a commit's patch (which may delete files) before
-    # calling this -- a path that no longer exists on disk must be a silent skip,
-    # not an error, since there's nothing left to redact.
-    categories = redact_paths(tmp_path, ["plugin/gone.py"], [])
-    assert categories == []
+    assert "<MCP_ENDPOINT>" in text

@@ -268,7 +268,7 @@ def test_commit_all_returns_false_and_leaves_branch_when_nothing_changed(tmp_pat
     assert publish.branch_exists(repo, "sync/x/abc123")
 
 
-def test_commit_all_stages_a_deletion_from_a_prior_git_apply(tmp_path):
+def test_commit_all_stages_a_plain_unlink_as_a_deletion(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / "file.txt").write_text("second\n")
@@ -304,21 +304,46 @@ def test_discard_branch_and_reset_removes_every_commit_made_this_batch(tmp_path)
 
 
 def test_discard_branch_and_reset_handles_a_staged_but_never_committed_change(tmp_path):
-    # The scenario that actually happens on a replay halt: the failing commit's
-    # patch was `git apply --index`'d (staged) before its gates ran, then a gate
-    # failed before commit_all was ever called -- so there's a staged, uncommitted
-    # change sitting on top of an already-committed earlier step in the same
-    # batch. `git checkout base_branch` refuses outright when that would
-    # overwrite staged changes; this must clear it first, not silently no-op.
+    # Defensive general case: even if something staged a change without
+    # committing it (whatever the source), `git checkout base_branch` refuses
+    # outright when that would overwrite staged changes; this must clear it
+    # first, not silently no-op. Complements the more common working-tree-only
+    # (unstaged) case below, which is what sync.py's own write/delete + gate
+    # sequence actually produces on a halt.
     repo = tmp_path / "repo"
     _init_repo(repo)
 
     publish.create_branch(repo, "sync/x/abc123")
     (repo / "file.txt").write_text("first commit\n")
     publish.commit_all(repo, "first commit")
-    # Simulates a git-apply-staged-but-never-committed change from a halted step.
     (repo / "file.txt").write_text("staged but never committed\n")
     _git(repo, "add", "-A")
+
+    publish.discard_branch_and_reset(repo, "main", "sync/x/abc123")
+
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert current_branch == "main"
+    assert not publish.branch_exists(repo, "sync/x/abc123")
+    assert (repo / "file.txt").read_text() == "original\n"
+
+
+def test_discard_branch_and_reset_handles_an_unstaged_working_tree_change(tmp_path):
+    # The scenario that actually happens on a replay halt: sync.py's
+    # _replay_one_commit writes/deletes a change's resolved files directly (no
+    # staging at all -- resolve_change reads content via `git show`, redacts
+    # it in memory, and only sync.py's write_text/unlink touch the working
+    # tree) before running its gates; if a gate fails, nothing was ever staged
+    # in the first place. `git checkout base_branch` also refuses when
+    # unstaged changes would be overwritten, not just staged ones.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    publish.create_branch(repo, "sync/x/abc123")
+    (repo / "file.txt").write_text("first commit\n")
+    publish.commit_all(repo, "first commit")
+    (repo / "file.txt").write_text("written but never staged at all\n")
 
     publish.discard_branch_and_reset(repo, "main", "sync/x/abc123")
 

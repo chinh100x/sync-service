@@ -894,7 +894,19 @@ def test_replay_commits_never_leaves_a_raw_pre_redaction_blob_in_the_oss_git_dat
         assert "RAW_SENSITIVE_MARKER" not in content
 
 
-def test_replay_commits_apply_conflict_halts_and_leaves_oss_untouched(tmp_path):
+def test_replay_commits_overwrites_a_divergent_oss_file_with_no_halt(tmp_path):
+    # No divergence detection in replay mode either -- matches the snapshot
+    # path's own already-documented tradeoff (README's very first lines): a
+    # run always overwrites, unconditionally, whether or not the OSS side had
+    # its own independent content sitting at that path. An earlier version of
+    # this pipeline applied a raw unified diff via `git apply`, where this
+    # exact scenario happened to fail (a "create" patch can't apply on top of
+    # existing unrelated content) and halted -- an accidental, incomplete side
+    # effect of patch mechanics, not a deliberate divergence-detection feature
+    # (see plan.md's own separate, not-yet-built "Phase 2 -- divergence
+    # detection"). Reading and writing content directly removes that
+    # incidental protection along with the parsing complexity that came with
+    # it -- replay mode's guarantees now match what's already documented.
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -904,22 +916,80 @@ def test_replay_commits_apply_conflict_halts_and_leaves_oss_untouched(tmp_path):
 
     _write(prod, "sync/monitoring.yaml", _replay_config())
     base = _commit(prod, "initial")
-    # A brand-new file from prod's point of view -- the patch is a "create."
     _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
     head = _commit(prod, "Add covenant check")
 
     _write(oss, "README.md", "# oss\n")
-    # But the OSS side already has unrelated content sitting at that exact
-    # destination path -- a "create" patch can't apply on top of that.
     _write(oss, "plugin/covenant.py", "# hand-written placeholder, not from prod\n")
     _commit(oss, "initial")
 
     exit_code = _run(prod, oss, base, head)
 
     assert exit_code == 0
+    branch = "sync-portmon-changes"
+    assert _git(oss, "branch", "--list", branch).stdout.strip()
+    _git(oss, "checkout", branch)
+    assert (oss / "plugin" / "covenant.py").read_text() == "def check():\n    return True\n"
+
+
+def test_replay_commits_halts_on_a_submodule_with_nothing_committed(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    other = tmp_path / "other"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+    other.mkdir()
+    _git(other, "init", "-q", "-b", "main")
+    _write(other, "README.md", "vendored dependency\n")
+    _commit(other, "initial")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+    _git(
+        prod,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        str(other),
+        "src/portmon/vendor",
+    )
+    head = _commit(prod, "add a submodule")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
     assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
-    # Untouched, exactly as it was before this run -- the halt discarded the
-    # whole attempt rather than leaving a partially-applied change behind.
-    assert (
-        oss / "plugin" / "covenant.py"
-    ).read_text() == "# hand-written placeholder, not from prod\n"
+
+
+def test_replay_commits_skips_binary_content_without_halting(tmp_path):
+    # Matches scrub.apply()'s own existing policy for the snapshot path:
+    # binary files are silently never propagated, not a halt.
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+    _write(prod, "src/portmon/a.py", "1\n")
+    (prod / "src" / "portmon" / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    head = _commit(prod, "add a text file and a binary file")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    branch = "sync-portmon-changes"
+    _git(oss, "checkout", branch)
+    assert (oss / "plugin" / "a.py").read_text() == "1\n"
+    assert not (oss / "plugin" / "img.png").exists()

@@ -81,7 +81,7 @@ def test_merge_commits_between_finds_a_merge_that_touches_source(tmp_path):
     assert len(patch.merge_commits_between(repo, base, head, "src")) == 1
 
 
-def test_extract_patch_is_scoped_to_source_only(tmp_path):
+def test_changed_paths_is_scoped_to_source_only(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     _write(repo, "src/a.py", "1\n")
@@ -91,13 +91,12 @@ def test_extract_patch_is_scoped_to_source_only(tmp_path):
     _write(repo, "docs/readme.md", "y\n")
     head = _commit(repo, "touches both")
 
-    text = patch.extract_patch(repo, head, "src")
+    paths = patch.changed_paths(repo, head, "src")
 
-    assert "a.py" in text
-    assert "readme.md" not in text
+    assert paths == ["src/a.py"]
 
 
-def test_extract_patch_represents_a_deletion(tmp_path):
+def test_changed_paths_lists_a_deleted_file(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     _write(repo, "src/a.py", "1\n")
@@ -105,39 +104,41 @@ def test_extract_patch_represents_a_deletion(tmp_path):
     (repo / "src" / "a.py").unlink()
     head = _commit(repo, "delete a.py")
 
-    text = patch.extract_patch(repo, head, "src")
-
-    assert "deleted file mode" in text
-    assert "+++ /dev/null" in text
+    assert patch.changed_paths(repo, head, "src") == ["src/a.py"]
 
 
-def test_has_binary_content_detects_a_binary_hunk(tmp_path):
+def test_changed_paths_decomposes_a_rename_into_old_and_new(tmp_path):
+    # --no-renames is deliberate: a rename must show as two independent paths,
+    # never a single ambiguous status entry -- see the module docstring.
     repo = tmp_path / "repo"
     _init_repo(repo)
-    _write(repo, "readme.txt", "hello\n")
+    _write(repo, "src/old.py", "identical content\n")
     _commit(repo, "initial")
-    (repo / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
-    head = _commit(repo, "add binary")
+    (repo / "src" / "old.py").rename(repo / "src" / "new.py")
+    head = _commit(repo, "rename old.py to new.py")
 
-    text = patch.extract_patch(repo, head, ".")
-
-    assert patch.has_binary_content(text)
+    assert set(patch.changed_paths(repo, head, "src")) == {"src/old.py", "src/new.py"}
 
 
-def test_has_binary_content_is_false_for_plain_text_diff(tmp_path):
+def test_changed_paths_handles_a_path_with_spaces(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
-    _write(repo, "a.py", "1\n")
+    _write(repo, "README.md", "x\n")
     _commit(repo, "initial")
-    _write(repo, "a.py", "2\n")
-    head = _commit(repo, "change")
+    _write(repo, "src/file with spaces.py", "1\n")
+    head = _commit(repo, "add a file with spaces in its name")
 
-    text = patch.extract_patch(repo, head, ".")
-
-    assert not patch.has_binary_content(text)
+    assert patch.changed_paths(repo, head, "src") == ["src/file with spaces.py"]
 
 
-def test_remap_paths_relocates_source_subdir_into_dest_subdir(tmp_path):
+def test_is_excluded_checks_the_mechanical_set_and_the_mapping_list():
+    assert patch.is_excluded(".sync-state/portmon.json", [])
+    assert patch.is_excluded(".sync-service-target/README.md", [])
+    assert patch.is_excluded("src/portmon/internal.py", ["src/portmon/internal.py"])
+    assert not patch.is_excluded("src/portmon/covenant.py", ["src/portmon/internal.py"])
+
+
+def test_resolve_change_write_reads_current_content_and_remaps_the_path(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     _write(repo, "src/portmon/a.py", "1\n")
@@ -145,127 +146,81 @@ def test_remap_paths_relocates_source_subdir_into_dest_subdir(tmp_path):
     _write(repo, "src/portmon/a.py", "2\n")
     head = _commit(repo, "change")
 
-    raw = patch.extract_patch(repo, head, "src/portmon")
-    remapped = patch.remap_paths(raw, "src/portmon", "plugin")
+    change = patch.resolve_change(repo, head, "src/portmon", "plugin", "src/portmon/a.py")
 
-    assert "a/plugin/a.py" in remapped
-    assert "b/plugin/a.py" in remapped
-    assert "src/portmon" not in remapped
-
-
-def test_remap_paths_is_a_noop_for_whole_repo_mapping(tmp_path):
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    _write(repo, "a.py", "1\n")
-    _commit(repo, "initial")
-    _write(repo, "a.py", "2\n")
-    head = _commit(repo, "change")
-
-    raw = patch.extract_patch(repo, head, ".")
-
-    assert patch.remap_paths(raw, ".", ".") == raw
+    assert change.kind == "write"
+    assert change.dest_path == "plugin/a.py"
+    assert change.content == "2\n"
 
 
-def test_remap_paths_leaves_dev_null_alone_for_a_new_file(tmp_path):
+def test_resolve_change_delete_when_path_no_longer_exists_at_sha(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     _write(repo, "src/portmon/a.py", "1\n")
     _commit(repo, "initial")
-    _write(repo, "src/portmon/b.py", "2\n")
-    head = _commit(repo, "add b.py")
+    (repo / "src" / "portmon" / "a.py").unlink()
+    head = _commit(repo, "delete a.py")
 
-    raw = patch.extract_patch(repo, head, "src/portmon")
-    remapped = patch.remap_paths(raw, "src/portmon", "plugin")
+    change = patch.resolve_change(repo, head, "src/portmon", "plugin", "src/portmon/a.py")
 
-    assert "--- /dev/null" in remapped
-    assert "+++ b/plugin/b.py" in remapped
+    assert change.kind == "delete"
+    assert change.dest_path == "plugin/a.py"
+    assert change.content is None
 
 
-def test_filter_excluded_drops_the_whole_block_for_an_excluded_file(tmp_path):
+def test_resolve_change_skip_for_binary_content(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
-    _write(repo, "src/a.py", "1\n")
-    _write(repo, "src/secret.py", "1\n")
+    _write(repo, "readme.txt", "hello\n")
     _commit(repo, "initial")
-    _write(repo, "src/a.py", "2\n")
-    _write(repo, "src/secret.py", "2\n")
-    head = _commit(repo, "change both")
+    (repo / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    head = _commit(repo, "add binary")
 
-    raw = patch.extract_patch(repo, head, "src")
-    filtered = patch.filter_excluded(raw, ["src/secret.py"])
+    change = patch.resolve_change(repo, head, ".", ".", "img.png")
 
-    assert "a.py" in filtered
-    assert "secret.py" not in filtered
+    assert change.kind == "skip"
+    assert change.content is None
 
 
-def test_touched_dest_paths_excludes_deleted_files(tmp_path):
+def test_resolve_change_raises_for_a_submodule(tmp_path):
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    _init_repo(repo)
+    _write(repo, "README.md", "x\n")
+    _commit(repo, "initial")
+    _init_repo(other)
+    _write(other, "README.md", "vendored dependency\n")
+    _commit(other, "initial")
+    _git(repo, "-c", "protocol.file.allow=always", "submodule", "add", str(other), "vendor/other")
+    head = _commit(repo, "add submodule")
+
+    try:
+        patch.resolve_change(repo, head, ".", ".", "vendor/other")
+        raise AssertionError("expected SubmoduleNotSupported")
+    except patch.SubmoduleNotSupported:
+        pass
+
+
+def test_resolve_change_is_a_noop_remap_for_whole_repo_mapping(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
-    _write(repo, "src/a.py", "1\n")
-    _write(repo, "src/b.py", "1\n")
+    _write(repo, "README.md", "x\n")
     _commit(repo, "initial")
-    (repo / "src" / "b.py").unlink()
-    _write(repo, "src/a.py", "2\n")
-    head = _commit(repo, "modify a, delete b")
+    _write(repo, "a.py", "1\n")
+    head = _commit(repo, "add a.py")
 
-    raw = patch.extract_patch(repo, head, "src")
-    remapped = patch.remap_paths(raw, "src", "plugin")
+    change = patch.resolve_change(repo, head, ".", ".", "a.py")
 
-    assert patch.touched_dest_paths(remapped) == ["plugin/a.py"]
+    assert change.dest_path == "a.py"
 
 
-def test_apply_to_working_tree_creates_updates_and_deletes_in_one_shot(tmp_path):
-    source = tmp_path / "source"
-    _init_repo(source)
-    _write(source, "src/a.py", "1\n")
-    _write(source, "src/b.py", "1\n")
-    _commit(source, "initial")
-    _write(source, "src/a.py", "2\n")  # modify
-    # Deliberately distinct content from b.py -- identical content here would make
-    # git's own diff rename-detection treat this as "b.py renamed to c.py" instead
-    # of an independent create + delete, which isn't what this test is exercising.
-    _write(source, "src/c.py", "brand new content\n")  # create
-    (source / "src" / "b.py").unlink()  # delete
-    head = _commit(source, "modify, create, delete")
-
-    dest = tmp_path / "dest"
-    _init_repo(dest)
-    _write(dest, "plugin/a.py", "1\n")
-    _write(dest, "plugin/b.py", "1\n")
-    _commit(dest, "initial")
-
-    raw = patch.extract_patch(source, head, "src")
-    remapped = patch.remap_paths(raw, "src", "plugin")
-    patch.apply_to_working_tree(dest, remapped)
-
-    assert (dest / "plugin" / "a.py").read_text() == "2\n"
-    assert (dest / "plugin" / "c.py").read_text() == "brand new content\n"
-    assert not (dest / "plugin" / "b.py").exists()
-    # Deliberately NOT staged -- see apply_to_working_tree's docstring for why
-    # (staging is what hashes content into a real git object; that must only
-    # happen after redaction, which runs against these working-tree files).
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-status"],
-        cwd=dest,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert staged == ""
-    unstaged = subprocess.run(
-        ["git", "diff", "--name-status"], cwd=dest, capture_output=True, text=True, check=True
-    ).stdout
-    assert "D\tplugin/b.py" in unstaged
-    assert "M\tplugin/a.py" in unstaged
-
-
-def test_apply_to_working_tree_never_creates_a_git_object_for_the_raw_content(tmp_path):
-    # The actual bug this guards against: `git apply --index` hashes and writes a
-    # real blob object immediately on staging, before redaction ever runs against
-    # it -- so the raw, pre-redaction content would briefly exist as a real (if
-    # unreferenced) git object. Applying to the working tree only means nothing
-    # gets hashed into an object until commit_all's own `git add` runs, by which
-    # point redaction has already rewritten the file on disk.
+def test_resolve_change_never_creates_a_git_object_for_the_raw_content(tmp_path):
+    # The bug the earlier apply-based version had: `git apply --index` hashes
+    # and writes a real blob object at *staging* time, before redaction ever
+    # runs -- so raw content could briefly exist as a real git object. Reading
+    # content via resolve_change and redacting it in Python, before anything
+    # is ever written into dest_repo at all, means the raw value never touches
+    # dest_repo's object database in the first place.
     source = tmp_path / "source"
     _init_repo(source)
     _write(source, "src/a.py", "safe\n")
@@ -278,10 +233,10 @@ def test_apply_to_working_tree_never_creates_a_git_object_for_the_raw_content(tm
     _write(dest, "plugin/a.py", "safe\n")
     _commit(dest, "initial")
 
-    raw = patch.extract_patch(source, head, "src")
-    remapped = patch.remap_paths(raw, "src", "plugin")
-    patch.apply_to_working_tree(dest, remapped)
+    change = patch.resolve_change(source, head, "src", "plugin", "src/a.py")
+    assert change.content == "RAW_SECRET_MARKER\n"  # read correctly in memory...
 
+    # ...but never written to dest_repo's working tree or object database at all.
     all_blobs = subprocess.run(
         ["git", "cat-file", "--batch-all-objects", "--batch-check=%(objectname) %(objecttype)"],
         cwd=dest,
@@ -297,27 +252,3 @@ def test_apply_to_working_tree_never_creates_a_git_object_for_the_raw_content(tm
             ["git", "cat-file", "-p", sha], cwd=dest, capture_output=True, text=True, check=True
         ).stdout
         assert "RAW_SECRET_MARKER" not in content
-
-
-def test_apply_to_working_tree_raises_on_a_patch_that_does_not_apply_cleanly(tmp_path):
-    source = tmp_path / "source"
-    _init_repo(source)
-    _write(source, "src/a.py", "1\n")
-    _commit(source, "initial")
-    _write(source, "src/a.py", "2\n")
-    head = _commit(source, "change")
-
-    dest = tmp_path / "dest"
-    _init_repo(dest)
-    # dest's content diverges from what the patch expects to modify.
-    _write(dest, "plugin/a.py", "something totally different\n")
-    _commit(dest, "initial")
-
-    raw = patch.extract_patch(source, head, "src")
-    remapped = patch.remap_paths(raw, "src", "plugin")
-
-    try:
-        patch.apply_to_working_tree(dest, remapped)
-        raise AssertionError("expected PatchApplyFailed")
-    except patch.PatchApplyFailed:
-        pass

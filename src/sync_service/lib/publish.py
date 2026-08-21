@@ -204,8 +204,8 @@ def discard_branch_and_reset(dest_repo: Path, base_branch: str, branch: str) -> 
     one commit that failed.
 
     Resets any pending working-tree change first -- the commit that triggered
-    the halt was `git apply`'d (working tree only, deliberately never staged --
-    see patch.apply_to_working_tree) before its gates ran, and never got as far
+    the halt already had its resolved files written/deleted directly (see
+    sync.py's `_replay_one_commit`) before its gates ran, and never got as far
     as commit_all if a gate failed. Without clearing that dirty working tree
     first, `git checkout base_branch` can flatly refuse ("local changes would
     be overwritten") and silently no-op (this call intentionally doesn't check

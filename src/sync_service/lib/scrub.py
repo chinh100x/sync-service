@@ -13,8 +13,10 @@ from .config import RedactRule
 # necessities (repo internals, sync bookkeeping), not a content decision. `.git`
 # itself never needs an entry here: `git ls-files` structurally can never return
 # anything under it. `.sync-state`/`.sync-service-target` stay as a backstop in
-# case either ever ends up committed by accident.
-_ALWAYS_EXCLUDE = {".sync-state", ".sync-service-target"}
+# case either ever ends up committed by accident. Public (not `_`-prefixed):
+# patch.py's per-commit replay path applies the same mechanical exclusion to
+# whatever a single commit touches, not just a full-tree walk.
+ALWAYS_EXCLUDE = {".sync-state", ".sync-service-target"}
 
 
 def _tracked_files(repo_root: Path, source: str) -> list[str]:
@@ -37,6 +39,21 @@ def _tracked_files(repo_root: Path, source: str) -> list[str]:
     return proc.stdout.splitlines()
 
 
+def redact_text(text: str, transform_rules: list[RedactRule]) -> tuple[str, list[str]]:
+    """The actual mechanical substitution, against a plain string -- no file
+    I/O. Returns (redacted_text, categories_triggered). Shared by `apply()`
+    (redacts a full-tree snapshot) and patch.py's per-commit replay (redacts
+    one file's content read via `git show`, in memory, before it's ever
+    written to dest_repo's working tree at all)."""
+    categories: set[str] = set()
+    for rule in transform_rules:
+        before = text
+        text = rule.compiled.sub(rule.replace, text)
+        if text != before and rule.category:
+            categories.add(rule.category)
+    return text, sorted(categories)
+
+
 def apply(
     repo_root: Path,
     source: str,
@@ -55,7 +72,7 @@ def apply(
 
     for rel in _tracked_files(repo_root, source):
         rel_to_source = Path(rel)
-        if rel_to_source.parts[0] in _ALWAYS_EXCLUDE:
+        if rel_to_source.parts[0] in ALWAYS_EXCLUDE:
             continue
         if str(rel_to_source) in excluded or any(
             str(rel_to_source).startswith(e.rstrip("/") + "/") for e in excluded
@@ -68,45 +85,10 @@ def apply(
         except UnicodeDecodeError:
             continue  # binary files pass through untouched by substitution; skip in this demo
 
-        for rule in transform_rules:
-            before = text
-            text = rule.compiled.sub(rule.replace, text)
-            if text != before and rule.category:
-                categories.add(rule.category)
+        text, fired = redact_text(text, transform_rules)
+        categories |= set(fired)
 
         rel_to_dest = Path(dest) / rel_to_source.relative_to(source if source != "." else "")
         desired[str(rel_to_dest)] = text
 
     return desired, sorted(categories)
-
-
-def redact_paths(
-    repo_root: Path, rel_paths: list[str], transform_rules: list[RedactRule]
-) -> list[str]:
-    """Same mechanical substitution as `apply()`, but against specific files
-    already sitting in `repo_root` (dest-relative paths) rather than a fresh
-    walk of source. Used by patch.py's per-commit replay, which stages a
-    commit's own patch directly instead of rebuilding a full-tree snapshot --
-    this is the redact step for that path. Skips a path that no longer exists
-    (deleted by the patch) or can't be decoded as text (binary)."""
-    categories: set[str] = set()
-    for rel in rel_paths:
-        path = repo_root / rel
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text()
-        except UnicodeDecodeError:
-            continue
-
-        original = text
-        for rule in transform_rules:
-            before = text
-            text = rule.compiled.sub(rule.replace, text)
-            if text != before and rule.category:
-                categories.add(rule.category)
-
-        if text != original:
-            path.write_text(text)
-
-    return sorted(categories)

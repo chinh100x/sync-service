@@ -270,48 +270,61 @@ def _replay_one_commit(
     llm_safety_review_enabled: bool,
     llm_safety_review_additional_context: str | None,
 ) -> tuple[bool, list[str], list[str]] | str:
-    """One step of the replay loop: apply this commit's patch, redact + scan its
-    file content, scan its message, then commit -- or return a halt reason
-    string on the first thing that doesn't pass. There's no "conflict" in the
-    git-cherry-pick sense here (see patch.py) -- the only real failure modes are
-    an unclean `git apply` (dest has diverged from what this mapping expects),
-    binary content (can't be regex-redacted), or a secretscan/safety_review hit
+    """One step of the replay loop: resolve this commit's changed paths, redact
+    + scan the result, scan its message, then write/delete and commit -- or
+    return a halt reason string on the first thing that doesn't pass. No
+    "conflict" concept here (see patch.py's module docstring) -- every write is
+    an unconditional overwrite, the same "no divergence detection" posture this
+    tool's snapshot path already has and documents. The only real failure
+    modes are a submodule (nothing to scrub) or a secretscan/safety_review hit
     on either the files or the message.
 
     Success returns (committed, scrubbed_categories, touched_paths); `committed`
     is False for a commit that scoped down to nothing after exclude-filtering
     (still not a halt -- just a no-op step, same posture as scrub.apply()
     finding nothing to propagate)."""
-    raw = patch.extract_patch(source_repo, sha, mapping.source)
-    if not raw.strip():
+    changed = [
+        p
+        for p in patch.changed_paths(source_repo, sha, mapping.source)
+        if not patch.is_excluded(p, mapping.exclude)
+    ]
+    if not changed:
         return (False, [], [])
-
-    if patch.has_binary_content(raw):
-        return (
-            "touches binary content, which can't be scrubbed -- refusing to replay it "
-            "automatically"
-        )
-
-    filtered = patch.filter_excluded(raw, mapping.exclude)
-    if not filtered.strip():
-        return (False, [], [])
-
-    remapped = patch.remap_paths(filtered, mapping.source, mapping.dest)
 
     try:
-        patch.apply_to_working_tree(dest_repo, remapped)
-    except patch.PatchApplyFailed as exc:
+        resolved = [
+            patch.resolve_change(source_repo, sha, mapping.source, mapping.dest, p) for p in changed
+        ]
+    except patch.SubmoduleNotSupported as exc:
         return (
-            f"could not be applied to the OSS side cleanly ({exc}) -- likely the "
-            "OSS side has diverged from what this mapping expects"
+            f"touches a submodule ({exc}), which has no file content to scrub -- "
+            "refusing to replay it automatically"
         )
 
-    touched = patch.touched_dest_paths(remapped)
-    categories = scrub.redact_paths(dest_repo, touched, mapping.redact)
+    categories: set[str] = set()
+    written: list[str] = []
+    deleted: list[str] = []
+    for change in resolved:
+        if change.kind == "skip":
+            continue  # binary -- never propagated, same policy scrub.apply() uses
+        dest_file = dest_repo / change.dest_path
+        if change.kind == "delete":
+            dest_file.unlink(missing_ok=True)
+            deleted.append(change.dest_path)
+            continue
+        assert change.content is not None  # guaranteed by ResolvedChange's "write" contract
+        redacted, fired = scrub.redact_text(change.content, mapping.redact)
+        categories |= set(fired)
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        dest_file.write_text(redacted)
+        written.append(change.dest_path)
+
+    if not written and not deleted:
+        return (False, [], [])
 
     # --- secretscan.py + safety_review.py: the same two file-content gates the
-    # snapshot path runs, scoped to just what this commit touched. ---
-    file_contents = {p: (dest_repo / p).read_text() for p in touched if (dest_repo / p).is_file()}
+    # snapshot path runs, scoped to just what this commit actually wrote. ---
+    file_contents = {p: (dest_repo / p).read_text() for p in written}
     hits = secretscan.scan(file_contents)
     if hits:
         return f"secret scan hit: {hits[0]['rule']} in {hits[0]['path']}"
@@ -359,7 +372,7 @@ def _replay_one_commit(
 
     author = diff.commit_author(source_repo, sha)
     committed = publish.commit_all(dest_repo, message=message, author=author)
-    return (committed, categories, touched)
+    return (committed, sorted(categories), written + deleted)
 
 
 def _run_mapping_replay(
