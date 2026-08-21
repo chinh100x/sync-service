@@ -16,21 +16,25 @@ def test_comment_on_commit_prints_and_also_posts_to_slack(monkeypatch, capsys):
 
     assert "abc123def456"[:12] in result  # pragma: allowlist secret
     assert "something halted" in result
-    assert captured == [result]  # the same message, not a re-derived one
+    assert "```" not in result  # unfenced: this is the log print / return value
     assert result in capsys.readouterr().out
+    assert captured[0] != result  # Slack gets its own, fenced, copy
+    assert "```" in captured[0]
 
 
-def test_comment_on_commit_fences_the_body_as_a_code_block(monkeypatch):
-    # Renders as a code block wherever it's posted -- print, Slack, and the
-    # real GitHub comment all get the same fenced body, built once.
+def test_comment_on_commit_fences_the_body_for_slack_only(monkeypatch):
+    # Slack's message list mashes multi-line text together without a fence.
+    # The Action log / return value / real GitHub comment don't need it --
+    # a GitHub comment already renders as its own distinct block.
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     captured = []
     monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
 
     result = notify.comment_on_commit("abc123", "nothing to commit, no PR.")
 
-    assert "```\nnothing to commit, no PR.\n```" in result
-    assert captured[0] == result  # Slack gets the exact same fenced body
+    assert "```" not in result
+    assert "nothing to commit, no PR." in result
+    assert "```\nnothing to commit, no PR.\n```" in captured[0]
 
 
 def test_comment_on_commit_still_returns_normally_if_slack_post_fails(monkeypatch):
@@ -101,7 +105,7 @@ def test_comment_on_commit_posts_a_real_github_comment_when_token_and_repo_are_s
         "api",
         "repos/chinh100x/prod/commits/abc123def456/comments",
         "-f",
-        "body=```\nsomething halted\n```",
+        "body=something halted",
     ]
     assert kwargs["env"]["GH_TOKEN"] == "ghp_faketoken"
 

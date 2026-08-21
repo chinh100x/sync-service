@@ -35,16 +35,20 @@ def comment_on_commit(commit_sha: str, body: str, token: str | None = None) -> s
     short = commit_sha[:12]
     repo = os.environ.get("GITHUB_REPOSITORY")
     commit_url = f"https://github.com/{repo}/commit/{commit_sha}" if repo else None
+    # Slack-only -- Slack's message list mashes multi-line text together
+    # without it. The Action log print, the returned message, and the real
+    # GitHub commit comment all get the body as-is: a GitHub comment already
+    # renders as its own distinct block, so fencing it there is just noise.
     fenced_body = f"```\n{body}\n```"
 
     if commit_url:
-        message = f"[sync-service] comment on {commit_url}:\n{fenced_body}"
+        message = f"[sync-service] comment on {commit_url}:\n{body}"
         print(message)
         slack.post(f"[sync-service] comment on <{commit_url}|{short}>:\n{fenced_body}")
     else:
-        message = f"[sync-service] comment on {short}:\n{fenced_body}"
+        message = f"[sync-service] comment on {short}:\n{body}"
         print(message)
-        slack.post(message)
+        slack.post(f"[sync-service] comment on {short}:\n{fenced_body}")
 
     if token and repo:
         _post_github_comment(repo, commit_sha, body, token)
