@@ -318,10 +318,13 @@ def run_mapping(
     # validly-loaded config, never None -- so this always runs. ---
     check = breakcheck.run(dest_repo, mapping.break_check)
     if not check.passed:
+        # No fence of its own around check.output here -- comment_on_commit
+        # already wraps the whole body in one, and Slack/GitHub don't render
+        # nested triple-backtick fences correctly.
         notify.comment_on_commit(
             head_sha,
             f"[{project_label}] {mapping.key}: break check failed at "
-            f"`{check.failed_step}`:\n```\n{check.output}\n```",
+            f"`{check.failed_step}`:\n{check.output}",
             token=source_gh_token,
         )
         publish.discard_branch_and_reset(dest_repo, base_branch, branch)
