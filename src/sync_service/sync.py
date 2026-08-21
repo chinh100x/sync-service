@@ -421,9 +421,12 @@ def main(argv: list[str] | None = None) -> int:
     # A *different* token from the one above: this one needs write access to the
     # SOURCE (production) repo, to post a real comment on the commit that
     # triggered a halt -- gh_token is scoped to the OSS repo only and can't be
-    # reused for this. Optional: notify.comment_on_commit falls back to its
+    # reused for this. Read from the standard GITHUB_TOKEN name rather than a
+    # custom one -- in a real org deployment this is typically the same
+    # underlying token/app as target-token above, assumed to have write access
+    # to both repos. Optional: notify.comment_on_commit falls back to its
     # existing print + Slack behavior when this isn't set.
-    source_gh_token = os.environ.pop("SOURCE_GH_TOKEN", None)
+    source_gh_token = os.environ.pop("GITHUB_TOKEN", None)
 
     if args.command == "run":
         config = SyncConfig.load(args.config)

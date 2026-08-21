@@ -23,16 +23,15 @@ inputs:
   source-token:
     description: >
       Optional. A token with `contents: write` on the *source* (production)
-      repo -- a different token from target-token above, which is scoped to
-      the OSS repo only and can't be reused here. Powers a real GitHub
-      comment on the source commit for every halt/error (notify.py); without
-      it, that notification still happens via the Action's own log and Slack
-      (if configured), just not as a comment on the commit itself. The
-      calling workflow's own ambient `secrets.GITHUB_TOKEN` already has
-      write access to the repo the workflow runs in, so `${{ secrets.GITHUB_TOKEN }}`
-      is normally the right value here -- just confirm the job's
-      `permissions:` grants `contents: write` (some orgs default
-      GITHUB_TOKEN to read-only).
+      repo. Powers a real GitHub comment on the source commit for every
+      halt/error (notify.py); without it, that notification still happens via
+      the Action's own log and Slack (if configured), just not as a comment
+      on the commit itself. In a typical org deployment, `${{ secrets.GITHUB_TOKEN }}`
+      (the workflow's own ambient token, already scoped to the repo it runs
+      in) is the right value here -- just confirm the job's `permissions:`
+      grants `contents: write` (some orgs default GITHUB_TOKEN to read-only).
+      Exposed to the process as GITHUB_TOKEN, the standard name `gh` itself
+      recognizes.
     required: false
     default: ""
   openai-api-key:
@@ -123,13 +122,13 @@ runs:
         GH_TOKEN: ${{ inputs.target-token }}
         # A different token from GH_TOKEN above -- write access to the source
         # (production) repo, not the OSS one -- used only to post a real
-        # comment on the source commit when a halt/error happens.
-        SOURCE_GH_TOKEN: ${{ inputs.source-token }}
+        # comment on the source commit when a halt/error happens. Exposed
+        # under the standard name, not a custom one.
+        GITHUB_TOKEN: ${{ inputs.source-token }}
         # Only reaches pr_writer.py's own process -- breakcheck.py strips this name
-        # (alongside GH_TOKEN/GITHUB_TOKEN/SOURCE_GH_TOKEN) before running any
-        # far-side install/run command, so break_check (which executes untrusted,
-        # far-side-authored commands) never inherits it. See breakcheck.py's
-        # _STRIP_ENV_VARS note.
+        # (alongside GH_TOKEN/GITHUB_TOKEN) before running any far-side install/run
+        # command, so break_check (which executes untrusted, far-side-authored
+        # commands) never inherits it. See breakcheck.py's _STRIP_ENV_VARS note.
         OPENAI_API_KEY: ${{ inputs.openai-api-key }}
         OPENAI_PR_MODEL: ${{ inputs.openai-model }}
         OPENAI_SAFETY_MODEL: ${{ inputs.openai-safety-model }}
