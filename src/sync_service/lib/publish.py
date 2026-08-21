@@ -129,27 +129,56 @@ def branch_exists(dest_repo: Path, branch: str) -> bool:
     return remote.returncode == 0
 
 
-def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | None = None) -> bool:
-    """Commits dest_repo's pending working-tree changes onto a new branch.
-
-    `author` credits the real near-side committer via git's Author field, kept
-    distinct from the Committer field (`_git_id()`, the bot identity).
-
-    Returns False (no branch left behind) if there was nothing to commit --
-    happens when propagated content is already byte-identical to the far side.
-    """
+def create_branch(dest_repo: Path, branch: str) -> None:
+    """Starts a new working branch with no commits on it yet -- the entry point
+    both the one-commit-per-run path (via commit_to_branch) and patch.py's
+    per-commit replay (which commits onto it N times in a loop) share."""
     subprocess.run(
         ["git", *_git_id(), "checkout", "-b", branch],
         cwd=dest_repo,
         check=True,
         capture_output=True,
     )
+
+
+def commit_all(dest_repo: Path, message: str, author: str | None = None) -> bool:
+    """Stages everything currently sitting in the working tree (`git add -A` --
+    picks up any deletion too, whether from an explicit unlink or from a
+    `git apply --index` that already staged one) and commits it onto the
+    current branch.
+
+    `author` credits the real near-side committer via git's Author field, kept
+    distinct from the Committer field (`_git_id()`, the bot identity).
+
+    Returns False (nothing committed) if there was nothing to commit -- happens
+    when propagated content is already byte-identical to the far side.
+    """
     subprocess.run(["git", *_git_id(), "add", "-A"], cwd=dest_repo, check=True, capture_output=True)
 
     nothing_staged = (
         subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=dest_repo).returncode == 0
     )
     if nothing_staged:
+        return False
+
+    commit_cmd = ["git", *_git_id(), "commit", "-m", message]
+    if author:
+        commit_cmd += ["--author", author]
+    subprocess.run(commit_cmd, cwd=dest_repo, check=True, capture_output=True)
+    return True
+
+
+def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | None = None) -> bool:
+    """Commits dest_repo's pending working-tree changes onto a new branch --
+    create_branch + commit_all, with the branch torn back down if it turns out
+    there was nothing to commit (so no empty branch is left behind).
+
+    Returns False (no branch left behind) if there was nothing to commit --
+    happens when propagated content is already byte-identical to the far side.
+    """
+    create_branch(dest_repo, branch)
+    committed = commit_all(dest_repo, message, author=author)
+    if not committed:
         subprocess.run(
             ["git", *_git_id(), "checkout", "-"],
             cwd=dest_repo,
@@ -162,13 +191,33 @@ def commit_to_branch(dest_repo: Path, branch: str, message: str, author: str | N
             check=True,
             capture_output=True,
         )
-        return False
+    return committed
 
-    commit_cmd = ["git", *_git_id(), "commit", "-m", message]
-    if author:
-        commit_cmd += ["--author", author]
-    subprocess.run(commit_cmd, cwd=dest_repo, check=True, capture_output=True)
-    return True
+
+def discard_branch_and_reset(dest_repo: Path, base_branch: str, branch: str) -> None:
+    """Abandons an in-progress replay batch entirely: checks back out to
+    base_branch and deletes `branch`, discarding every commit made so far this
+    run (not just uncommitted working-tree changes -- see
+    discard_working_tree_changes for that narrower case). Used when a later
+    commit in a per-commit replay batch fails a gate -- nothing partial from
+    this batch may ever reach origin, so the whole branch goes, not just the
+    one commit that failed.
+
+    Resets any pending working-tree change first -- the commit that triggered
+    the halt was `git apply`'d (working tree only, deliberately never staged --
+    see patch.apply_to_working_tree) before its gates ran, and never got as far
+    as commit_all if a gate failed. Without clearing that dirty working tree
+    first, `git checkout base_branch` can flatly refuse ("local changes would
+    be overwritten") and silently no-op (this call intentionally doesn't check
+    return codes, since it's a best-effort cleanup on an already-halted path),
+    leaving the working tree stuck on the very branch this was supposed to
+    abandon."""
+    subprocess.run(
+        ["git", *_git_id(), "reset", "--hard", "HEAD"], cwd=dest_repo, capture_output=True
+    )
+    subprocess.run(["git", *_git_id(), "clean", "-fd"], cwd=dest_repo, capture_output=True)
+    subprocess.run(["git", *_git_id(), "checkout", base_branch], cwd=dest_repo, capture_output=True)
+    subprocess.run(["git", *_git_id(), "branch", "-D", branch], cwd=dest_repo, capture_output=True)
 
 
 def reword_commit(dest_repo: Path, message: str) -> None:

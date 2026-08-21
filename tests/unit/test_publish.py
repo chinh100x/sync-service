@@ -238,6 +238,98 @@ def test_record_synced_is_local_only_without_a_remote(tmp_path):
     assert publish.already_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
 
 
+def test_create_branch_then_commit_all_supports_multiple_commits_on_one_branch(tmp_path):
+    # The shape patch.py's replay loop actually uses: one create_branch, then
+    # commit_all called N times as each source commit clears its gates.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    publish.create_branch(repo, "sync/x/abc123")
+    (repo / "file.txt").write_text("first\n")
+    assert publish.commit_all(repo, "first commit") is True
+    (repo / "file.txt").write_text("second\n")
+    assert publish.commit_all(repo, "second commit") is True
+
+    log = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    assert log == ["second commit", "first commit", "initial"]
+
+
+def test_commit_all_returns_false_and_leaves_branch_when_nothing_changed(tmp_path):
+    # Unlike commit_to_branch, commit_all never tears the branch down itself --
+    # the replay loop needs the branch to still be there for the *next* commit
+    # in the batch even if this particular step was a no-op.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    publish.create_branch(repo, "sync/x/abc123")
+
+    assert publish.commit_all(repo, "nothing changed") is False
+    assert publish.branch_exists(repo, "sync/x/abc123")
+
+
+def test_commit_all_stages_a_deletion_from_a_prior_git_apply(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "file.txt").write_text("second\n")
+    publish.create_branch(repo, "sync/x/abc123")
+    (repo / "file.txt").unlink()
+
+    assert publish.commit_all(repo, "deleted file.txt") is True
+    assert not (repo / "file.txt").exists()
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+    assert "file.txt" not in tracked
+
+
+def test_discard_branch_and_reset_removes_every_commit_made_this_batch(tmp_path):
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    publish.create_branch(repo, "sync/x/abc123")
+    (repo / "file.txt").write_text("first\n")
+    publish.commit_all(repo, "first commit")
+    (repo / "file.txt").write_text("second\n")
+    publish.commit_all(repo, "second commit")
+
+    publish.discard_branch_and_reset(repo, "main", "sync/x/abc123")
+
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert current_branch == "main"
+    assert not publish.branch_exists(repo, "sync/x/abc123")
+    assert (repo / "file.txt").read_text() == "original\n"  # back to base_branch's own content
+
+
+def test_discard_branch_and_reset_handles_a_staged_but_never_committed_change(tmp_path):
+    # The scenario that actually happens on a replay halt: the failing commit's
+    # patch was `git apply --index`'d (staged) before its gates ran, then a gate
+    # failed before commit_all was ever called -- so there's a staged, uncommitted
+    # change sitting on top of an already-committed earlier step in the same
+    # batch. `git checkout base_branch` refuses outright when that would
+    # overwrite staged changes; this must clear it first, not silently no-op.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    publish.create_branch(repo, "sync/x/abc123")
+    (repo / "file.txt").write_text("first commit\n")
+    publish.commit_all(repo, "first commit")
+    # Simulates a git-apply-staged-but-never-committed change from a halted step.
+    (repo / "file.txt").write_text("staged but never committed\n")
+    _git(repo, "add", "-A")
+
+    publish.discard_branch_and_reset(repo, "main", "sync/x/abc123")
+
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert current_branch == "main"
+    assert not publish.branch_exists(repo, "sync/x/abc123")
+    assert (repo / "file.txt").read_text() == "original\n"
+
+
 def test_open_pr_fails_loudly_when_gh_missing_but_remote_configured(tmp_path, monkeypatch):
     # A remote being configured means a real publish was intended -- if `gh` isn't
     # available to do it, that must surface as a failure, never a silent dry-run

@@ -47,6 +47,11 @@ class Mapping(BaseModel):
     # Static, human-authored "why this mapping propagates" -- the one place free text
     # can appear in the PR body without coming from the (untrusted) production commit.
     public_reason: str | None = None
+    # Off by default. On: replay each source commit in base..head as its own OSS
+    # commit (via git apply, not git cherry-pick -- see patch.py), preserving the
+    # real message/author and getting create/update/delete parity for free. Off:
+    # today's behavior, one squashed commit per run with a placeholder message.
+    replay_commits: bool = False
 
     @field_validator("dest")
     @classmethod

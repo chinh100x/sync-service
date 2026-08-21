@@ -134,3 +134,18 @@ def review(
         raise SafetyReviewUnavailable(str(exc)) from exc
     except Exception as exc:
         raise SafetyReviewUnavailable(f"OpenAI call failed: {type(exc).__name__}") from exc
+
+
+def review_message(
+    text: str, *, enabled: bool, additional_context: str | None = None
+) -> SafetyVerdict | None:
+    """Same gate as `review()`, pointed at a commit message's free-form prose
+    instead of file content. Messages never go through scrub's mechanical
+    redaction (there's no file to walk), so for patch.py's per-commit replay
+    path, this -- plus secretscan.scan() on the same text -- is the only check
+    a leaked message would ever hit before becoming a real, permanent commit."""
+    return review(
+        SafetyReviewContext(mapping_key="commit-message", files={"<commit message>": text}),
+        enabled=enabled,
+        additional_context=additional_context,
+    )

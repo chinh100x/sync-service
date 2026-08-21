@@ -1,7 +1,7 @@
 import subprocess
 
 from sync_service.lib.config import BreakCheck, Mapping
-from sync_service.lib.diff import commit_author, match
+from sync_service.lib.diff import commit_author, commit_message, match
 
 
 def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):
@@ -29,6 +29,33 @@ def test_commit_author_reads_name_and_email_from_the_commit(tmp_path):
     ).stdout.strip()
 
     assert commit_author(repo, sha) == "Jane Dev <jane@example.com>"
+
+
+def test_commit_message_reads_the_full_raw_message(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Fix the thing\n\nSome body text explaining why.",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    assert commit_message(repo, sha) == "Fix the thing\n\nSome body text explaining why."
 
 
 def _mapping(key, source, dest="dest/"):

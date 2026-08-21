@@ -20,23 +20,24 @@ conventions from any other repo, but does follow the org-wide
 
 ```
 src/sync_service/
-├── sync.py         entrypoint: `sync-service run --config ... --source-repo ... --dest-repo ... --base ... --head ...`
+├── sync.py               entrypoint: `sync-service run --config ... --source-repo ... --dest-repo ... --base ... --head ...`
 └── lib/
-    ├── config.py       pydantic schema for the sync/*.yaml mapping config
-    ├── diff.py         which mappings did base..head touch (the trigger)
-    ├── scrub.py        exclude list + regex substitution (redact)
-    ├── secretscan.py   built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
-    ├── breakcheck.py   runs break_check.install / .run before a PR is opened (the break check)
-    ├── llm_client.py   shared OpenAI structured-output call used by pr_writer.py/safety_review.py
-    ├── pr_writer.py    LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
+    ├── config.py         pydantic schema for the sync/*.yaml mapping config
+    ├── diff.py           which mappings did base..head touch (the trigger)
+    ├── scrub.py          exclude list + regex substitution (redact)
+    ├── patch.py          per-commit patch extraction/remap/apply for `replay_commits: true` mappings (see below)
+    ├── secretscan.py     built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
+    ├── breakcheck.py     runs break_check.install / .run before a PR is opened (the break check)
+    ├── llm_client.py     shared OpenAI structured-output call used by pr_writer.py/safety_review.py
+    ├── pr_writer.py      LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
     ├── safety_review.py  LLM semantic safety review. On by default; fails *closed* (halts) on any error — a security gate, not cosmetic.
-    ├── publish.py      branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
-    ├── notify.py       comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
-    └── slack.py        best-effort Slack Incoming Webhook post; never raises, off unless configured
-tests/unit/         one test file per module
-tests/integration/  full end-to-end scenarios through sync.main() against two local git repos — no GitHub needed
-action.yml          composite GitHub Action wrapping the CLI, for real deployment
-Makefile            `make install` / `make lint` / `make format` / `make typecheck` / `make test` / `make check` (lint + typecheck + test) — same stages CI runs, in the same order
+    ├── publish.py        branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
+    ├── notify.py         comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
+    └── slack.py          best-effort Slack Incoming Webhook post; never raises, off unless configured
+tests/unit/               one test file per module
+tests/integration/        full end-to-end scenarios through sync.main() against two local git repos — no GitHub needed
+action.yml                composite GitHub Action wrapping the CLI, for real deployment
+Makefile                  `make install` / `make lint` / `make format` / `make typecheck` / `make test` / `make check` (lint + typecheck + test) — same stages CI runs, in the same order
 ```
 
 ## Try it locally
@@ -138,6 +139,7 @@ What each piece does, and what happens if you leave it out:
 
 - **`source`/`dest`** are optional in a mapping — omit both to track the whole repo instead of a subdirectory. Anything that shouldn't cross needs its own entry in `exclude` (exact paths only, no wildcards).
 - **`public_reason`** — optional, human-authored line explaining why this mapping propagates; shows up in the PR body.
+- **`replay_commits`** — **off by default**. Off (today's behavior): one OSS commit per sync run, no matter how many production commits are in `base..head`, with a mechanical placeholder message (later reworded to the generated PR title). On: one real OSS commit *per production commit*, each keeping its own original message and author — via `patch.py`'s per-commit patch extraction/remap/apply (not `git cherry-pick`; see `patch.py`'s module docstring for why), which also gets file create/update/delete parity for free. Runs the same secretscan/safety-review gates per commit, plus the same two gates against each commit's own message (never checked at all in the default mode, since the placeholder message never carries anything real). All-or-nothing: a gate failure on any commit in the batch halts the whole batch and discards every commit made so far in that run — nothing partial ever reaches `origin`.
 - **Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, no config needed to enable it. Advisory only, never part of the sync/security decision: on any failure, timeout, or missing `OPENAI_API_KEY`, it falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) — OpenAI is never a hard dependency of the sync itself. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright.
 - **`llm_safety_review.enabled`** — **on by default**. The opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict (missing/bad key, timeout, malformed output, content too large) is a hard halt, no PR, never treated as a pass — so with this on, `openai-api-key` is effectively required; every sync halts without a working key rather than silently skipping the review. Catches what a regex can't — a real customer name, an internal codename, proprietary logic described in a comment. Set `llm_safety_review: { enabled: false }` to skip the review outright for a mapping that has no OpenAI dependency to spare.
 - **`llm_safety_review.additional_context`** — optional, project-specific "also watch for this" text — appended to the reviewer's fixed base prompt, never replacing it, so the built-in invariants (never quote the actual sensitive value, bias toward blocking when uncertain) can't be weakened by config.

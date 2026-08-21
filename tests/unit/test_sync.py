@@ -2,7 +2,7 @@ import os
 import subprocess
 
 from sync_service import sync
-from sync_service.lib import notify
+from sync_service.lib import llm_client, notify, safety_review
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -628,3 +628,298 @@ def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monk
     # here since no remote is configured, same as the demo).
     assert slack_messages[0].startswith("[Prod] PR opened (dry-run):")
     assert "sync:portmon" not in slack_messages[0]
+
+
+# --- replay_commits: true -- one OSS commit per source commit, not one squashed
+# commit per run. See plan2.md for the design this implements. -------------------
+
+
+class _FakeResponse:
+    def __init__(self, output_parsed):
+        self.output_parsed = output_parsed
+
+
+class _FakeResponses:
+    def __init__(self, behavior):
+        self._behavior = behavior
+
+    def parse(self, **kwargs):
+        return self._behavior(**kwargs)
+
+
+class _FakeClient:
+    def __init__(self, behavior, **_kwargs):
+        self.responses = _FakeResponses(behavior)
+
+
+def _fake_openai(monkeypatch, behavior):
+    monkeypatch.setattr(llm_client, "OpenAI", lambda **_kwargs: _FakeClient(behavior))
+
+
+def _passes_everything(**kw):
+    return _FakeResponse(safety_review.SafetyVerdict(passed=True, categories=[], summary="fine"))
+
+
+def _replay_config(*, llm_safety_review_enabled=False):
+    return (
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    replay_commits: true\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n'
+        "llm_pr:\n"
+        "  enabled: false\n"
+        "llm_safety_review:\n"
+        f"  enabled: {str(llm_safety_review_enabled).lower()}\n"
+    )
+
+
+def _run(prod, oss, base, head):
+    return sync.main(
+        [
+            "run",
+            "--config",
+            str(prod / "sync" / "monitoring.yaml"),
+            "--source-repo",
+            str(prod),
+            "--dest-repo",
+            str(oss),
+            "--base",
+            base,
+            "--head",
+            head,
+        ]
+    )
+
+
+def test_replay_commits_produces_one_oss_commit_per_source_commit_with_original_messages(
+    tmp_path,
+):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    _commit(prod, "Add covenant check")
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
+    second = _commit(prod, "Flip covenant default")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, second)
+
+    assert exit_code == 0
+    branch = "sync-portmon-changes"
+    messages = _git(oss, "log", "--format=%s", f"main..{branch}").stdout.splitlines()
+    # Oldest first in history, so `git log`'s newest-first order lists them reversed.
+    assert messages == ["Flip covenant default", "Add covenant check"]
+    assert (oss / "plugin" / "covenant.py").exists()
+
+
+def test_replay_commits_propagates_a_deletion(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+
+    _write(prod, "src/portmon/a.py", "keep\n")
+    _write(prod, "src/portmon/b.py", "remove me\n")
+    _commit(prod, "add a and b")
+    (prod / "src" / "portmon" / "b.py").unlink()
+    head = _commit(prod, "remove b, it's unused")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    branch = "sync-portmon-changes"
+    _git(oss, "checkout", branch)
+    assert (oss / "plugin" / "a.py").exists()
+    assert not (oss / "plugin" / "b.py").exists()
+
+
+def test_replay_commits_halts_the_whole_batch_when_a_later_message_is_unsafe(tmp_path, monkeypatch):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config(llm_safety_review_enabled=True))
+    base = _commit(prod, "initial")
+
+    _write(prod, "src/portmon/a.py", "1\n")
+    _commit(prod, "clean first commit")
+    _write(prod, "src/portmon/a.py", "2\n")
+    # The leak is in the MESSAGE, not the file content -- the file-content review
+    # must pass for both commits; only the message check on this second commit
+    # should ever see a block.
+    head = _commit(prod, "Fix Rocky Mountain CAG SharePoint sync\n\ninternal detail")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    def behavior(**kw):
+        user_content = kw["input"][1]["content"]
+        if "Rocky Mountain" in user_content:
+            return _FakeResponse(
+                safety_review.SafetyVerdict(
+                    passed=False, categories=["customer_name"], summary="names a customer"
+                )
+            )
+        return _passes_everything(**kw)
+
+    _fake_openai(monkeypatch, behavior)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0  # correct policy enforcement, not a tool failure
+    # Nothing partial reached origin -- not even the first, individually-clean
+    # commit's own branch/content survives a later halt in the same batch.
+    assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
+    # git checkout can leave an empty "plugin/" directory sitting on disk (git
+    # doesn't track/clean up empty dirs) -- what actually matters is that main
+    # never gained a tracked file there.
+    assert "plugin/a.py" not in _git(oss, "ls-files").stdout
+    assert any("replay halted" in m and "commit message" in m for m in captured)
+
+
+def test_replay_commits_secret_in_message_halts_before_any_commit_survives(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+
+    _write(prod, "src/portmon/a.py", "1\n")
+    key_msg = 'AKIA_KEY = "AKIAABCDEFGHIJKLMNOP"'  # pragma: allowlist secret
+    head = _commit(prod, key_msg)
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
+    assert "plugin/a.py" not in _git(oss, "ls-files").stdout
+
+
+def test_replay_commits_never_leaves_a_raw_pre_redaction_blob_in_the_oss_git_database(
+    tmp_path,
+):
+    # End-to-end version of patch.py's own object-database test: a real
+    # redact rule fires during a real replay run through sync.main(), and no
+    # object anywhere in the OSS repo's git database -- not just the final
+    # commit's tree, ANY object at all, including ones a naive `git apply
+    # --index` would have left dangling -- may ever contain the raw value.
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    config = (
+        "mappings:\n"
+        "  - key: portmon\n"
+        "    source: src/portmon\n"
+        "    dest: plugin\n"
+        "    replay_commits: true\n"
+        "    redact:\n"
+        "      - pattern: RAW_SENSITIVE_MARKER\n"
+        "        replace: <REDACTED>\n"
+        "    break_check:\n"
+        '      install: "true"\n'
+        '      run: "true"\n'
+        "llm_pr:\n"
+        "  enabled: false\n"
+        "llm_safety_review:\n"
+        "  enabled: false\n"
+    )
+    _write(prod, "sync/monitoring.yaml", config)
+    base = _commit(prod, "initial")
+
+    _write(prod, "src/portmon/a.py", "RAW_SENSITIVE_MARKER\n")
+    head = _commit(prod, "add a.py")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    assert (oss / "plugin" / "a.py").read_text() == "<REDACTED>\n"
+
+    all_blobs = subprocess.run(
+        ["git", "cat-file", "--batch-all-objects", "--batch-check=%(objectname) %(objecttype)"],
+        cwd=oss,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    for line in all_blobs.splitlines():
+        sha, kind = line.split()
+        if kind != "blob":
+            continue
+        content = subprocess.run(
+            ["git", "cat-file", "-p", sha], cwd=oss, capture_output=True, text=True, check=True
+        ).stdout
+        assert "RAW_SENSITIVE_MARKER" not in content
+
+
+def test_replay_commits_apply_conflict_halts_and_leaves_oss_untouched(tmp_path):
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+    # A brand-new file from prod's point of view -- the patch is a "create."
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    head = _commit(prod, "Add covenant check")
+
+    _write(oss, "README.md", "# oss\n")
+    # But the OSS side already has unrelated content sitting at that exact
+    # destination path -- a "create" patch can't apply on top of that.
+    _write(oss, "plugin/covenant.py", "# hand-written placeholder, not from prod\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
+    # Untouched, exactly as it was before this run -- the halt discarded the
+    # whole attempt rather than leaving a partially-applied change behind.
+    assert (
+        oss / "plugin" / "covenant.py"
+    ).read_text() == "# hand-written placeholder, not from prod\n"

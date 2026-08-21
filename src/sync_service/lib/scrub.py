@@ -78,3 +78,35 @@ def apply(
         desired[str(rel_to_dest)] = text
 
     return desired, sorted(categories)
+
+
+def redact_paths(
+    repo_root: Path, rel_paths: list[str], transform_rules: list[RedactRule]
+) -> list[str]:
+    """Same mechanical substitution as `apply()`, but against specific files
+    already sitting in `repo_root` (dest-relative paths) rather than a fresh
+    walk of source. Used by patch.py's per-commit replay, which stages a
+    commit's own patch directly instead of rebuilding a full-tree snapshot --
+    this is the redact step for that path. Skips a path that no longer exists
+    (deleted by the patch) or can't be decoded as text (binary)."""
+    categories: set[str] = set()
+    for rel in rel_paths:
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except UnicodeDecodeError:
+            continue
+
+        original = text
+        for rule in transform_rules:
+            before = text
+            text = rule.compiled.sub(rule.replace, text)
+            if text != before and rule.category:
+                categories.add(rule.category)
+
+        if text != original:
+            path.write_text(text)
+
+    return sorted(categories)

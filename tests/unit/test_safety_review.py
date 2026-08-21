@@ -212,6 +212,52 @@ def test_malformed_output_raises_unavailable(monkeypatch):
         pass
 
 
+# --- review_message(): the same gate, pointed at a commit message instead of files ---
+
+
+def test_review_message_passes_through_to_review_with_a_pseudo_file(monkeypatch):
+    verdict = safety_review.SafetyVerdict(passed=True, categories=[], summary="fine")
+    calls = _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    result = safety_review.review_message("Fix the sync bug", enabled=True)
+
+    assert result == verdict
+    assert "Fix the sync bug" in calls[0]["input"][1]["content"]
+
+
+def test_review_message_disabled_never_calls_openai(monkeypatch):
+    _raising_openai(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    assert safety_review.review_message("anything", enabled=False) is None
+
+
+def test_review_message_blocked_carries_categories(monkeypatch):
+    verdict = safety_review.SafetyVerdict(
+        passed=False, categories=["customer_name"], summary="names a real customer"
+    )
+    _fake_openai(monkeypatch, lambda **kw: _FakeResponse(verdict))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    result = safety_review.review_message("Fix Acme Corp's integration", enabled=True)
+
+    assert result is not None
+    assert result.passed is False
+    assert "customer_name" in result.categories
+
+
+def test_review_message_unavailable_raises_same_as_review(monkeypatch):
+    _raising_openai(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    try:
+        safety_review.review_message("anything", enabled=True)
+        raise AssertionError("expected SafetyReviewUnavailable")
+    except safety_review.SafetyReviewUnavailable:
+        pass
+
+
 # --- sync.py integration: the gate actually halts (or doesn't) the real pipeline ---
 
 

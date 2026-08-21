@@ -14,7 +14,17 @@ import os
 import sys
 from pathlib import Path
 
-from .lib import breakcheck, diff, notify, pr_writer, publish, safety_review, scrub, secretscan
+from .lib import (
+    breakcheck,
+    diff,
+    notify,
+    patch,
+    pr_writer,
+    publish,
+    safety_review,
+    scrub,
+    secretscan,
+)
 from .lib.config import Mapping, SyncConfig
 
 
@@ -32,6 +42,7 @@ def run_mapping(
     mapping: Mapping,
     source_repo: Path,
     dest_repo: Path,
+    base_sha: str,
     head_sha: str,
     base_branch: str,
     gh_token: str | None,
@@ -59,6 +70,21 @@ def run_mapping(
             f"[{project_label}] {mapping.key}: PR already exists for this commit "
             "— skipping (idempotent re-run).",
             "skipped-exists",
+        )
+
+    if mapping.replay_commits:
+        return _run_mapping_replay(
+            mapping=mapping,
+            source_repo=source_repo,
+            dest_repo=dest_repo,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            base_branch=base_branch,
+            project_label=project_label,
+            gh_token=gh_token,
+            llm_pr_enabled=llm_pr_enabled,
+            llm_safety_review_enabled=llm_safety_review_enabled,
+            llm_safety_review_additional_context=llm_safety_review_additional_context,
         )
 
     # Temporary working name -- candidate_diff() below needs a real commit on a real
@@ -166,10 +192,11 @@ def run_mapping(
         branch=branch,
         head_sha=head_sha,
         project_label=project_label,
-        desired=desired,
+        changed_files=sorted(desired),
         scrubbed_categories=scrubbed_categories,
         llm_pr_enabled=llm_pr_enabled,
         gh_token=gh_token,
+        reword_head_commit=True,
     )
 
 
@@ -181,28 +208,37 @@ def _finalize_and_publish(
     branch: str,
     head_sha: str,
     project_label: str,
-    desired: dict[str, str],
+    changed_files: list[str],
     scrubbed_categories: list[str],
     llm_pr_enabled: bool,
     gh_token: str | None,
+    reword_head_commit: bool,
 ) -> str:
     """The one place this tool tries to be human-readable rather than purely
     mechanical. Built only from already-scrubbed, already-validated OSS-side
     content; falls back to a deterministic title/body on any failure -- pr_writer
-    fails *open*, the opposite of safety_review's fail-closed behavior above."""
+    fails *open*, the opposite of safety_review's fail-closed behavior above.
+
+    `reword_head_commit`: True for the snapshot path, where HEAD is still
+    carrying commit_to_branch's mechanical placeholder message and needs the
+    generated title swapped in before anything is pushed. False for replay --
+    HEAD there is a real, already-validated source commit with its own real
+    message; the PR title is used for the PR itself (below), never to overwrite
+    a replayed commit's message."""
     context = pr_writer.PRContext(
         mapping_key=mapping.key,
         public_reason=mapping.public_reason,
-        changed_files=sorted(desired),
+        changed_files=changed_files,
         sanitized_diff=diff.candidate_diff(dest_repo, base_branch, branch),
         scrubbed_categories=scrubbed_categories,
         validation=pr_writer.ValidationSummary(run_command=mapping.break_check.run),
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
-    # Swap the placeholder for the generated title -- same safe, OSS-side-only
-    # source as the PR body. No mechanical trailer: the sha it would carry is
-    # already recoverable from record_synced's tracking ref.
-    publish.reword_commit(dest_repo, message=title)
+    if reword_head_commit:
+        # Swap the placeholder for the generated title -- same safe, OSS-side-only
+        # source as the PR body. No mechanical trailer: the sha it would carry is
+        # already recoverable from record_synced's tracking ref.
+        publish.reword_commit(dest_repo, message=title)
     # Clean, title-derived name -- idempotency doesn't depend on it (see
     # already_synced above), so it carries no sha except when disambiguating an
     # actual name collision (not a re-run, which already_synced already caught).
@@ -223,6 +259,220 @@ def _finalize_and_publish(
     publish.record_synced(dest_repo, mapping.key, head_sha, token=gh_token)
     notify.pr_opened(project_label, title, result.message)
     return "opened"
+
+
+def _replay_one_commit(
+    *,
+    mapping: Mapping,
+    source_repo: Path,
+    dest_repo: Path,
+    sha: str,
+    llm_safety_review_enabled: bool,
+    llm_safety_review_additional_context: str | None,
+) -> tuple[bool, list[str], list[str]] | str:
+    """One step of the replay loop: apply this commit's patch, redact + scan its
+    file content, scan its message, then commit -- or return a halt reason
+    string on the first thing that doesn't pass. There's no "conflict" in the
+    git-cherry-pick sense here (see patch.py) -- the only real failure modes are
+    an unclean `git apply` (dest has diverged from what this mapping expects),
+    binary content (can't be regex-redacted), or a secretscan/safety_review hit
+    on either the files or the message.
+
+    Success returns (committed, scrubbed_categories, touched_paths); `committed`
+    is False for a commit that scoped down to nothing after exclude-filtering
+    (still not a halt -- just a no-op step, same posture as scrub.apply()
+    finding nothing to propagate)."""
+    raw = patch.extract_patch(source_repo, sha, mapping.source)
+    if not raw.strip():
+        return (False, [], [])
+
+    if patch.has_binary_content(raw):
+        return (
+            "touches binary content, which can't be scrubbed -- refusing to replay it "
+            "automatically"
+        )
+
+    filtered = patch.filter_excluded(raw, mapping.exclude)
+    if not filtered.strip():
+        return (False, [], [])
+
+    remapped = patch.remap_paths(filtered, mapping.source, mapping.dest)
+
+    try:
+        patch.apply_to_working_tree(dest_repo, remapped)
+    except patch.PatchApplyFailed as exc:
+        return (
+            f"could not be applied to the OSS side cleanly ({exc}) -- likely the "
+            "OSS side has diverged from what this mapping expects"
+        )
+
+    touched = patch.touched_dest_paths(remapped)
+    categories = scrub.redact_paths(dest_repo, touched, mapping.redact)
+
+    # --- secretscan.py + safety_review.py: the same two file-content gates the
+    # snapshot path runs, scoped to just what this commit touched. ---
+    file_contents = {p: (dest_repo / p).read_text() for p in touched if (dest_repo / p).is_file()}
+    hits = secretscan.scan(file_contents)
+    if hits:
+        return f"secret scan hit: {hits[0]['rule']} in {hits[0]['path']}"
+
+    try:
+        verdict = safety_review.review(
+            safety_review.SafetyReviewContext(mapping_key=mapping.key, files=file_contents),
+            enabled=llm_safety_review_enabled,
+            additional_context=llm_safety_review_additional_context,
+        )
+    except safety_review.SafetyReviewUnavailable as exc:
+        return f"semantic safety review unavailable ({exc})"
+    if verdict is not None and not verdict.passed:
+        categories_note = (
+            f" (categories: {', '.join(verdict.categories)})" if verdict.categories else ""
+        )
+        return f"semantic safety review blocked this change: {verdict.summary}{categories_note}"
+
+    # --- New: the same two gates, run against the commit's own message -- the
+    # one piece of content the snapshot path never has to check, because it
+    # never uses the raw message at all. ---
+    message = diff.commit_message(source_repo, sha)
+    message_hits = secretscan.scan({"<commit message>": message})
+    if message_hits:
+        return f"secret scan hit in commit message: {message_hits[0]['rule']}"
+
+    try:
+        message_verdict = safety_review.review_message(
+            message,
+            enabled=llm_safety_review_enabled,
+            additional_context=llm_safety_review_additional_context,
+        )
+    except safety_review.SafetyReviewUnavailable as exc:
+        return f"commit message safety review unavailable ({exc})"
+    if message_verdict is not None and not message_verdict.passed:
+        categories_note = (
+            f" (categories: {', '.join(message_verdict.categories)})"
+            if message_verdict.categories
+            else ""
+        )
+        return (
+            f"commit message blocked by safety review: "
+            f"{message_verdict.summary}{categories_note}"
+        )
+
+    author = diff.commit_author(source_repo, sha)
+    committed = publish.commit_all(dest_repo, message=message, author=author)
+    return (committed, categories, touched)
+
+
+def _run_mapping_replay(
+    *,
+    mapping: Mapping,
+    source_repo: Path,
+    dest_repo: Path,
+    base_sha: str,
+    head_sha: str,
+    base_branch: str,
+    project_label: str,
+    gh_token: str | None,
+    llm_pr_enabled: bool,
+    llm_safety_review_enabled: bool,
+    llm_safety_review_additional_context: str | None,
+) -> str:
+    """`mapping.replay_commits` path: one real OSS commit per source commit,
+    preserving each one's own message and author, instead of one squashed
+    commit per run. All-or-nothing like `git cherry-pick` stopping at a
+    conflict -- but since nothing here is pushed until every commit in the
+    range has cleared, a halt discards the whole in-progress branch rather
+    than leaving a partial cherry-pick sitting around to resolve."""
+    commits = patch.commits_between(source_repo, base_sha, head_sha, mapping.source)
+    if not commits:
+        if patch.merge_commits_between(source_repo, base_sha, head_sha, mapping.source):
+            return _halt(
+                head_sha,
+                f"[{project_label}] {mapping.key}: only a merge commit touches "
+                f"{mapping.source}/ in this range -- replay can't linearize a merge "
+                "automatically. Halted, no PR.",
+                "replay-halt",
+            )
+        print(f"[sync:{mapping.key}] no commits under {mapping.source}/ to replay")
+        return _halt(
+            head_sha,
+            f"[{project_label}] {mapping.key}: no commits under {mapping.source}/ in "
+            "base..head — no-op, no PR.",
+            "empty",
+        )
+
+    branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
+    publish.create_branch(dest_repo, branch)
+
+    replayed = 0
+    all_touched: set[str] = set()
+    all_categories: set[str] = set()
+    for sha in commits:
+        outcome = _replay_one_commit(
+            mapping=mapping,
+            source_repo=source_repo,
+            dest_repo=dest_repo,
+            sha=sha,
+            llm_safety_review_enabled=llm_safety_review_enabled,
+            llm_safety_review_additional_context=llm_safety_review_additional_context,
+        )
+        if isinstance(outcome, str):
+            # Discards every commit made so far this batch, not just this one --
+            # nothing partial from a halted replay may ever reach origin.
+            publish.discard_branch_and_reset(dest_repo, base_branch, branch)
+            return _halt(
+                head_sha,
+                f"[{project_label}] {mapping.key}: replay halted at commit "
+                f"{sha[:12]} -- {outcome}. Halted, no PR.",
+                "replay-halt",
+            )
+        committed, categories, touched = outcome
+        all_categories |= set(categories)
+        all_touched |= set(touched)
+        if committed:
+            replayed += 1
+        print(f"[sync:{mapping.key}] replayed {sha[:12]} ({'committed' if committed else 'no-op'})")
+
+    if replayed == 0:
+        publish.discard_branch_and_reset(dest_repo, base_branch, branch)
+        print(
+            f"[sync:{mapping.key}] nothing changed vs the OSS side across "
+            f"{len(commits)} commit(s)"
+        )
+        return _halt(
+            head_sha,
+            f"[{project_label}] {mapping.key}: scrubbed content matches what's "
+            f"already on the OSS side across {len(commits)} commit(s) — nothing to "
+            "commit, no PR.",
+            "unchanged",
+        )
+
+    # --- breakcheck.py: runs once, against the final replayed state -- not once
+    # per replayed commit. An intermediate commit is a real historical waypoint,
+    # not something that individually needs to install/build/pass on its own. ---
+    if mapping.break_check is not None:
+        check = breakcheck.run(dest_repo, mapping.break_check)
+        if not check.passed:
+            notify.comment_on_commit(
+                head_sha,
+                f"[{project_label}] {mapping.key}: break check failed at "
+                f"`{check.failed_step}`:\n```\n{check.output}\n```",
+            )
+            publish.discard_branch_and_reset(dest_repo, base_branch, branch)
+            return "breakcheck-halt"
+
+    return _finalize_and_publish(
+        mapping=mapping,
+        dest_repo=dest_repo,
+        base_branch=base_branch,
+        branch=branch,
+        head_sha=head_sha,
+        project_label=project_label,
+        changed_files=sorted(all_touched),
+        scrubbed_categories=sorted(all_categories),
+        llm_pr_enabled=llm_pr_enabled,
+        gh_token=gh_token,
+        reword_head_commit=False,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
                     mapping=m,
                     source_repo=source_repo,
                     dest_repo=dest_repo,
+                    base_sha=args.base,
                     head_sha=args.head,
                     base_branch=args.base_branch,
                     gh_token=gh_token,

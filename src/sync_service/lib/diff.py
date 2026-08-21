@@ -34,6 +34,20 @@ def commit_author(repo_path: str | Path, sha: str) -> str:
     return out.stdout.strip()
 
 
+def commit_message(repo_path: str | Path, sha: str) -> str:
+    """The raw, untrusted production commit message at `sha` -- callers replaying
+    this commit onto the far side must run it through secretscan/safety_review
+    themselves (patch.py's replay path does); it is never safe to use as-is."""
+    out = subprocess.run(
+        ["git", "show", "-s", "--format=%B", sha],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
 def candidate_diff(dest_repo: str | Path, base_branch: str, branch: str) -> str:
     """Diff entirely within dest_repo's own history -- never reads the production
     repo, so it only shows what scrub.apply() already wrote. Feeds pr_writer.py's
