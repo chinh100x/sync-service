@@ -7,10 +7,6 @@ from __future__ import annotations
 
 from .config import RedactRule
 
-# Always excluded regardless of the mapping's own exclude list -- mechanical
-# necessities (repo internals, sync bookkeeping), not a content decision.
-# Public: patch.py's is_excluded() applies this on top of the mapping's own
-# exclude list.
 ALWAYS_EXCLUDE = {".sync-state", ".sync-service-target"}
 
 

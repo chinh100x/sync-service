@@ -66,7 +66,7 @@ def match(files: list[str], mappings: list[Mapping]) -> dict[str, list[str]]:
     hits: dict[str, list[str]] = {}
     for m in mappings:
         if m.source in (".", "./", ""):
-            touched = list(files)  # whole-repo mapping — every changed file is "under" it
+            touched = list(files)
         else:
             path = m.source.rstrip("/") + "/"
             touched = [f for f in files if f.startswith(path) or f == path.rstrip("/")]

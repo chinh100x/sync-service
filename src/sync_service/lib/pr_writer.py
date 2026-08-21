@@ -43,8 +43,6 @@ class ChangeType(str, Enum):
     REVERT = "revert"
 
 
-# Rendered as the "## Types of Changes" checklist, in this order -- label text
-# matches the project's own PR template verbatim (emoji + parenthetical included).
 _CHANGE_TYPE_LABELS: dict[ChangeType, str] = {
     ChangeType.BREAKING: (
         "❌ Breaking change (fix or feature that would cause existing "
@@ -108,9 +106,6 @@ Return only the requested structured output."""
 
 
 class ValidationSummary(BaseModel):
-    # The actual break_check.run command, or None if nothing was configured. No
-    # "failed" state: a configured check has already passed by the time this is
-    # built (a failure halts earlier), so it's only ever "ran" or "nothing to run."
     run_command: str | None = None
 
 
@@ -120,10 +115,6 @@ class PRContext(BaseModel):
     changed_files: list[str]
     sanitized_diff: str
     scrubbed_categories: list[str] = []
-    # Binary files propagated as-is: no redact (regex doesn't apply to bytes)
-    # and no safety_review (nothing semantic for an LLM to judge in raw
-    # bytes) ran against them. Disclosed mechanically in render_markdown --
-    # never left to the LLM writer to remember to mention.
     unscrubbed_binary_files: list[str] = []
     validation: ValidationSummary
 
@@ -198,7 +189,6 @@ class OpenAIPRWriter:
         self._model = model
 
     def generate(self, context: PRContext) -> GeneratedPRContent:
-        # Failures propagate to build_pr_content()'s fallback -- not caught here.
         return llm_client.structured_call(
             api_key=self._api_key,
             model=self._model,
@@ -216,8 +206,6 @@ def get_pr_writer(enabled: bool) -> PRWriter:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return DeterministicPRWriter()
-    # `or`, not dict.get(default=): action.yml always sets this env var, empty
-    # string when unset by the workflow -- empty means "not provided."
     model = os.environ.get("OPENAI_PR_MODEL") or _DEFAULT_MODEL
     return OpenAIPRWriter(api_key=api_key, model=model)
 
@@ -238,9 +226,6 @@ def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
         lines.append(f"- [{checked}] {label}")
     lines.append("")
 
-    # Built from `context`, never `generated`, same reason as Test Plan below --
-    # this is a security-relevant disclosure that must always appear when it
-    # applies, not something left to the LLM writer to remember to mention.
     if context.unscrubbed_binary_files:
         lines += ["## Binary Files (Not Scanned)", ""]
         lines.append(
@@ -254,11 +239,6 @@ def render_markdown(generated: GeneratedPRContent, context: PRContext) -> str:
         lines += [f"- `{f}`" for f in context.unscrubbed_binary_files]
         lines.append("")
 
-    # Reports what was actually tested *in the destination repo* -- the real
-    # break_check.run command, not a description of this tool's own pipeline.
-    # Empty (heading only) when nothing was configured to run, per the template's
-    # own "if nothing to test, leave it empty" instruction -- never a fabricated
-    # "no manual steps needed" line standing in for a fact that isn't true.
     lines += ["## Test Plan", ""]
     if context.validation.run_command:
         lines.append(f"Ran `{context.validation.run_command}` in the destination repo -- passing.")
@@ -279,8 +259,6 @@ def build_pr_content(context: PRContext, *, llm_enabled: bool) -> tuple[str, str
             generated = writer.generate(context)
             print(f"[pr-writer:{context.mapping_key}] LLM PR generation succeeded")
         except Exception as exc:
-            # Error category only -- never the exception payload, which some SDK
-            # error types can echo request/response content back into.
             print(
                 f"[pr-writer:{context.mapping_key}] LLM PR generation failed "
                 f"({type(exc).__name__}); using deterministic fallback"

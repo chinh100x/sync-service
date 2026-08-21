@@ -38,7 +38,7 @@ def structured_call(
             {"role": "user", "content": user_content},
         ],
         text_format=text_format,
-        store=False,  # minimize server-side retention of whatever this call sent
+        store=False,
     )
     parsed = response.output_parsed
     if parsed is None:

@@ -49,9 +49,6 @@ class OutcomeKind(str, Enum):
     PUBLISH_FAILED = "publish-failed"
 
 
-# The only two outcomes that mean this run itself malfunctioned, rather than
-# the tool correctly enforcing policy or finding nothing to do -- see main()'s
-# exit-code check below.
 _FAILURE_OUTCOMES = {OutcomeKind.SAFETY_REVIEW_ERROR, OutcomeKind.PUBLISH_FAILED}
 
 
@@ -128,11 +125,11 @@ def _replay_one_commit(
             continue
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         if change.kind == "write_binary":
-            assert change.raw is not None  # guaranteed by ResolvedChange's "write_binary" contract
+            assert change.raw is not None
             dest_file.write_bytes(change.raw)
             written_binary.append(change.dest_path)
             continue
-        assert change.content is not None  # guaranteed by ResolvedChange's "write" contract
+        assert change.content is not None
         redacted, fired = scrub.redact_text(change.content, mapping.redact)
         categories |= set(fired)
         dest_file.write_text(redacted)
@@ -147,20 +144,13 @@ def _replay_one_commit(
             f"as-is (no redact/safety_review possible): {', '.join(written_binary)}"
         )
 
-    # --- secretscan.py + safety_review.py: the hard secret-scan gate and the
-    # semantic gate, against just what this commit actually wrote. Binary
-    # content joins the secretscan pass (via a lossless latin-1 view) but not
-    # safety_review, which needs real text to make a semantic judgment. ---
+    # --- secretscan + safety_review on the files just written ---
     file_contents = {p: (dest_repo / p).read_text() for p in written}
     binary_scan_view = {p: (dest_repo / p).read_bytes().decode("latin-1") for p in written_binary}
     hits = secretscan.scan({**file_contents, **binary_scan_view})
     if hits:
         return f"secret scan hit: {hits[0]['rule']} in {hits[0]['path']}"
 
-    # SafetyReviewUnavailable deliberately propagates uncaught -- it's an infra
-    # failure (missing key, API error), not a policy decision, and run_mapping's
-    # loop catches it separately to produce a distinct "safety-review-error"
-    # (exit 1) outcome instead of a generic policy halt (exit 0).
     verdict = safety_review.review(
         safety_review.SafetyReviewContext(mapping_key=mapping.key, files=file_contents),
         enabled=llm_safety_review_enabled,
@@ -172,15 +162,12 @@ def _replay_one_commit(
         )
         return f"semantic safety review blocked this change: {verdict.summary}{categories_note}"
 
-    # --- The same two gates, run against the commit's own message -- the raw
-    # message is used as-is once it clears these, unlike file content (which
-    # also goes through scrub.redact_text above). ---
+    # --- same two gates, run against the commit's own message ---
     message = diff.commit_message(source_repo, sha)
     message_hits = secretscan.scan({"<commit message>": message})
     if message_hits:
         return f"secret scan hit in commit message: {message_hits[0]['rule']}"
 
-    # Same as above -- SafetyReviewUnavailable propagates uncaught here too.
     message_verdict = safety_review.review_message(
         message,
         enabled=llm_safety_review_enabled,
@@ -220,15 +207,10 @@ def run_mapping(
     its own message and author. All-or-nothing: a gate failure on any commit
     discards every commit made so far in this batch (see
     publish.discard_branch_and_reset) -- nothing partial ever reaches origin."""
-    # Falls back to the mechanical `sync:mapping_key` prefix when project_name isn't set.
     project_label = project_name or f"sync:{mapping.key}"
-    # Otherwise a prior mapping/halt in the same run can leave dest_repo checked out
-    # on its own branch, nesting this mapping's commit inside that one's PR.
     publish.checkout_base(dest_repo, base_branch)
 
-    # --- Idempotency: has this exact (mapping, head_sha) already been proposed? ---
-    # Tracked via a dedicated ref, not the branch name -- the final name is a clean,
-    # title-derived slug with no sha in it, so it can't double as the idempotency key.
+    # --- idempotency: already proposed for this (mapping, head_sha)? ---
     if publish.already_synced(dest_repo, mapping.key, head_sha):
         print(
             f"[sync:{mapping.key}] PR already exists for this (mapping, head_sha) "
@@ -242,15 +224,7 @@ def run_mapping(
             source_gh_token,
         )
 
-    # --- patch.py: which source commits does this mapping actually need to replay? ---
-    # Checked before commits_between even matters: a merge commit's own unique
-    # content (e.g. hand-resolved conflict content that exists in neither
-    # parent individually) is never captured by replaying its parents alone --
-    # confirmed empirically, not assumed. Any merge touching source halts the
-    # whole batch immediately, whether or not non-merge commits also exist in
-    # range; replaying just the non-merge commits and silently ignoring the
-    # merge would leave the OSS side with a *wrong* final state, not just an
-    # incomplete one.
+    # --- which source commits need replay? any merge touching source halts the batch ---
     merges = patch.merge_commits_between(source_repo, base_sha, head_sha, mapping.source)
     if merges:
         return _halt(
@@ -275,10 +249,7 @@ def run_mapping(
         )
 
     branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
-    # CandidateBranch discards this branch on __exit__ by default -- covers every
-    # early return below AND any exception nobody thought to catch explicitly,
-    # not just the ones with their own discard_branch_and_reset call. Only
-    # _finalize_and_publish resolves it (.publish() / .keep()) instead.
+    # --- create the candidate branch (discarded on exit unless resolved below) ---
     with publish.CandidateBranch(dest_repo, base_branch, branch) as candidate:
         replayed = 0
         all_touched: set[str] = set()
@@ -295,9 +266,6 @@ def run_mapping(
                     llm_safety_review_additional_context=llm_safety_review_additional_context,
                 )
             except safety_review.SafetyReviewUnavailable as exc:
-                # An infra failure (missing key, API error), not a policy decision --
-                # a hard halt, never an implicit pass, and distinct from the generic
-                # "replay-halt" below so main() can exit 1 instead of 0 for it.
                 return _halt(
                     head_sha,
                     f"[{project_label}] {mapping.key}: semantic safety review unavailable "
@@ -306,8 +274,6 @@ def run_mapping(
                     source_gh_token,
                 )
             if isinstance(outcome, str):
-                # Discards every commit made so far this batch, not just this one --
-                # nothing partial from a halted replay may ever reach origin.
                 return _halt(
                     head_sha,
                     f"[{project_label}] {mapping.key}: replay halted at commit "
@@ -338,16 +304,9 @@ def run_mapping(
                 source_gh_token,
             )
 
-        # --- breakcheck.py: runs once, against the final replayed state -- not once
-        # per replayed commit. An intermediate commit is a real historical waypoint,
-        # not something that individually needs to install/build/pass on its own.
-        # mapping.break_check has no default in the schema -- always present on a
-        # validly-loaded config, never None -- so this always runs. ---
+        # --- breakcheck.py: run once, against the final replayed state ---
         check = breakcheck.run(dest_repo, mapping.break_check)
         if not check.passed:
-            # No fence of its own around check.output here -- comment_on_commit
-            # already wraps the whole body in one, and Slack/GitHub don't render
-            # nested triple-backtick fences correctly.
             notify.comment_on_commit(
                 head_sha,
                 f"[{project_label}] {mapping.key}: break check failed at "
@@ -356,7 +315,7 @@ def run_mapping(
             )
             return OutcomeKind.BREAKCHECK_HALT
 
-        # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
+        # --- pr_writer.py + publish.py: generate the PR content, then publish it ---
         return _finalize_and_publish(
             candidate=candidate,
             mapping=mapping,
@@ -405,9 +364,6 @@ def _finalize_and_publish(
         validation=pr_writer.ValidationSummary(run_command=mapping.break_check.run),
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
-    # Clean, title-derived name -- idempotency doesn't depend on it (see
-    # already_synced above), so it carries no sha except when disambiguating an
-    # actual name collision (not a re-run, which already_synced already caught).
     branch = publish.slugify(title)
     if publish.branch_exists(dest_repo, branch):
         branch = f"{branch}-{head_sha[:7]}"
@@ -415,9 +371,6 @@ def _finalize_and_publish(
     result = publish.open_pr(dest_repo, candidate.branch, base_branch, title, body, token=gh_token)
     print(f"[sync:{mapping.key}] {result.message}")
     if not result.success:
-        # A real `git push` may have already landed before `gh pr create` failed --
-        # discarding the local branch here wouldn't undo that, so keep it rather
-        # than tearing it down (see CandidateBranch's own docstring).
         candidate.keep()
         return _halt(
             head_sha,
@@ -426,8 +379,6 @@ def _finalize_and_publish(
             source_gh_token,
         )
     candidate.publish()
-    # Only mark synced once publish actually succeeded -- a halt/failure must
-    # still be retried on the next run, not silently skipped.
     publish.record_synced(dest_repo, mapping.key, head_sha, token=gh_token)
     notify.pr_opened(project_label, title, result.message)
     return OutcomeKind.OPENED
@@ -449,17 +400,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    # Removed from the environment before breakcheck.run() executes any OSS-side
-    # command; only open_pr()'s one gh pr create call gets it back, explicitly.
+    # --- tokens: gh_token for the OSS side, source_gh_token for the source-commit comment ---
     gh_token = os.environ.pop("GH_TOKEN", None)
-    # A *different* token from the one above: this one needs write access to the
-    # SOURCE (production) repo, to post a real comment on the commit that
-    # triggered a halt -- gh_token is scoped to the OSS repo only and can't be
-    # reused for this. Read from the standard GITHUB_TOKEN name rather than a
-    # custom one -- in a real org deployment this is typically the same
-    # underlying token/app as target-token above, assumed to have write access
-    # to both repos. Optional: notify.comment_on_commit falls back to its
-    # existing print + Slack behavior when this isn't set.
     source_gh_token = os.environ.pop("GITHUB_TOKEN", None)
 
     if args.command == "run":
@@ -468,9 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         dest_repo = Path(args.dest_repo)
         by_mapping = {m.key: m for m in config.mappings}
 
-        # setdefault so an explicit SYNC_SERVICE_COMMIT_NAME/_EMAIL always wins.
-        # publish.py reads these lazily, so setting them here (after config load,
-        # before any commit) takes effect despite publish already being imported.
+        # --- commit identity: project-specific bot name/email, if configured ---
         if config.project_name:
             slug = config.project_name.lower().replace(" ", "-")
             os.environ.setdefault("SYNC_SERVICE_COMMIT_NAME", f"{config.project_name} Sync Bot")
@@ -478,16 +418,11 @@ def main(argv: list[str] | None = None) -> int:
                 "SYNC_SERVICE_COMMIT_EMAIL", f"{slug}-sync-bot@users.noreply.github.com"
             )
 
-        # --- diff.py: what changed, which mappings matched (the trigger). ---
+        # --- diff.py: what changed, which mappings matched (the trigger) ---
         files = diff.changed_files(source_repo, args.base, args.head)
         hits = diff.match(files, config.mappings)
 
         if not hits:
-            # No Slack/comment here, unlike every outcome inside run_mapping below --
-            # this fires on *every* push that doesn't touch any tracked mapping at
-            # all, which for a repo without a narrow path filter on its own trigger
-            # is most commits. There's no mapping-specific reason to report, and
-            # notifying here would turn Slack into a log of unrelated pushes.
             print("no mapping touched — no-op")
             return 0
 
@@ -511,10 +446,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        # A halt the tool performed correctly is still exit 0 -- that's policy
-        # working as intended. A publish failure or a safety review that
-        # couldn't even run is a real problem with this run and must not be
-        # silently reported as success.
+        # --- exit code: a halt is still 0; only an infra failure is 1 ---
         if any(o in _FAILURE_OUTCOMES for o in outcomes):
             return 1
         return 0

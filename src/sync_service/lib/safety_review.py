@@ -17,8 +17,6 @@ from pydantic import BaseModel
 from . import llm_client
 
 _DEFAULT_MODEL = llm_client.DEFAULT_MODEL
-# Fail closed, not truncate-and-hope: too large to review in full is treated the
-# same as any other reason the review couldn't run.
 _MAX_REVIEW_CHARS = 40_000
 
 _SYSTEM_PROMPT = """You are a security/privacy reviewer for a service that copies code \
@@ -73,7 +71,7 @@ def _build_system_prompt(additional_context: str | None) -> str:
 
 class SafetyReviewContext(BaseModel):
     mapping_key: str
-    files: dict[str, str]  # dest-relative path -> full file content, same as `desired`
+    files: dict[str, str]
 
 
 class SafetyVerdict(BaseModel):
@@ -121,7 +119,6 @@ def review(
         )
 
     model = os.environ.get("OPENAI_SAFETY_MODEL") or _DEFAULT_MODEL
-    # Every failure below becomes the same SafetyReviewUnavailable -- sync.py halts on it.
     try:
         return llm_client.structured_call(
             api_key=api_key,

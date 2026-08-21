@@ -32,7 +32,6 @@ def post(text: str) -> bool:
         )
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             delivered = 200 <= response.status < 300
-            # Only when actually configured -- an unconfigured run stays silent.
             print(f"[slack] {'posted' if delivered else f'failed (status {response.status})'}")
             return delivered
     except Exception as exc:

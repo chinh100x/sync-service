@@ -17,14 +17,12 @@ from pydantic import BaseModel, field_validator, model_validator
 class RedactRule(BaseModel):
     pattern: str
     replace: str
-    # Category name only, never the matched value -- surfaced to pr_writer.py as
-    # scrubbed_categories so the PR body can say what kind of thing was excluded.
     category: str | None = None
 
     @field_validator("pattern")
     @classmethod
     def _compiles(cls, v: str) -> str:
-        re.compile(v)  # raises at load time if invalid
+        re.compile(v)
         return v
 
     @property
@@ -39,13 +37,11 @@ class BreakCheck(BaseModel):
 
 class Mapping(BaseModel):
     key: str
-    source: str = "."  # whole repo by default; narrow to a subdirectory if needed
+    source: str = "."
     dest: str = "."
     exclude: list[str] = []
     redact: list[RedactRule] = []
     break_check: BreakCheck
-    # Static, human-authored "why this mapping propagates" -- the one place free text
-    # can appear in the PR body without coming from the (untrusted) production commit.
     public_reason: str | None = None
 
     @field_validator("dest")
@@ -57,25 +53,11 @@ class Mapping(BaseModel):
 
 
 class LLMPRConfig(BaseModel):
-    # On by default -- pr_writer.py falls back to a deterministic writer on any
-    # failure/missing key, so OpenAI is never a hard dependency of the sync itself.
-    # Set to false to skip the LLM call outright and always use the deterministic
-    # title/body.
     enabled: bool = True
 
 
 class SafetyReviewConfig(BaseModel):
-    # On by default. Unlike llm_pr, a failure here (missing key, API error, content
-    # too large) is a hard halt, not a safe fallback -- see safety_review.py. This
-    # means OPENAI_API_KEY is effectively required: with this on and no working key,
-    # every sync halts rather than silently skipping the review. Set to false to
-    # skip the review outright (no OpenAI dependency at all for that mapping).
     enabled: bool = True
-    # Optional, project-specific "also flag this" note (e.g. "covenant threshold
-    # values", "internal deal codenames") -- appended to safety_review.py's fixed
-    # base prompt, never replacing it. What counts as sensitive differs per repo;
-    # the base prompt's own invariants (never quote the value, bias toward
-    # blocking) can't be weakened by this field.
     additional_context: str | None = None
 
 
@@ -83,8 +65,6 @@ class SyncConfig(BaseModel):
     mappings: list[Mapping]
     llm_pr: LLMPRConfig = LLMPRConfig()
     llm_safety_review: SafetyReviewConfig = SafetyReviewConfig()
-    # Human-readable label for Slack notifications (e.g. "Prod"); unset falls back
-    # to the mechanical `label:mapping_key` prefix (see sync.py's run_mapping).
     project_name: str | None = None
 
     @model_validator(mode="after")
