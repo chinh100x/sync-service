@@ -1,6 +1,15 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Pinned to match pyproject.toml's exact ruff== dev dependency -- CI runs
+    # `uv run ruff format --check .` (the project's own installed ruff), not
+    # this hook, so a version drift between the two is invisible locally
+    # (pre-commit passes) but fails for real in CI (real incident: this hook
+    # was still on v0.6.9 while the project had drifted to 0.16.3 via an
+    # open-ended `ruff>=0.6`, and the two versions disagreed on reformatting
+    # two specific lines -- pre-commit reported clean while CI failed on the
+    # exact same files, three pushes in a row before it was caught). Bump
+    # both together, deliberately, never just one.
+    rev: v0.16.3
     hooks:
       - id: ruff-format
       # Import-sort auto-fix only on commit -- the full rule set (unused

@@ -22,7 +22,13 @@ packages = ["src/sync_service"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.6",
+    # Exact pin, not >= : must match .pre-commit-config.yaml's ruff-pre-commit
+    # `rev` exactly. CI runs this installed version directly (`uv run ruff
+    # format --check .`), not pre-commit's own hook -- an open-ended bound let
+    # the two drift apart silently once before (pre-commit stayed on an old
+    # rev while `uv sync` picked up a newer ruff), so pre-commit reported
+    # clean locally while CI failed on the same files. Bump both together.
+    "ruff==0.16.3",
     "pyright>=1.1",
     "pre-commit>=3.0",
 ]

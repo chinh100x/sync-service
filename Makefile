@@ -5,6 +5,7 @@ install:
 	uv run pre-commit install
 
 lint:
+	uv run ruff format --check .
 	uv run ruff check .
 
 format:

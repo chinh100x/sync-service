@@ -147,8 +147,7 @@ def _replay_one_commit(
             else ""
         )
         return (
-            f"commit message blocked by safety review: "
-            f"{message_verdict.summary}{categories_note}"
+            f"commit message blocked by safety review: {message_verdict.summary}{categories_note}"
         )
 
     author = diff.commit_author(source_repo, sha)
@@ -261,8 +260,7 @@ def run_mapping(
     if replayed == 0:
         publish.discard_branch_and_reset(dest_repo, base_branch, branch)
         print(
-            f"[sync:{mapping.key}] nothing changed vs the OSS side across "
-            f"{len(commits)} commit(s)"
+            f"[sync:{mapping.key}] nothing changed vs the OSS side across {len(commits)} commit(s)"
         )
         return _halt(
             head_sha,
