@@ -17,28 +17,6 @@ def _init_repo(repo):
     _git(repo, "commit", "-m", "initial")
 
 
-def test_commit_to_branch_commits_a_real_change(tmp_path):
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "file.txt").write_text("changed\n")
-
-    committed = publish.commit_to_branch(repo, "sync/x/abc123", "a real change")
-
-    assert committed is True
-    assert publish.branch_exists(repo, "sync/x/abc123")
-
-
-def test_commit_to_branch_no_op_when_content_is_identical(tmp_path):
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    # no file changes made — propagated content is byte-identical to what's already there
-
-    committed = publish.commit_to_branch(repo, "sync/x/abc123", "nothing actually changed")
-
-    assert committed is False
-    assert not publish.branch_exists(repo, "sync/x/abc123")
-
-
 def _is_ancestor(repo, maybe_ancestor, branch):
     proc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", maybe_ancestor, branch],
@@ -55,12 +33,14 @@ def test_checkout_base_prevents_one_mapping_stacking_on_another(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
 
+    publish.create_branch(repo, "sync/a/111111111111")
     (repo / "a.txt").write_text("a\n")
-    publish.commit_to_branch(repo, "sync/a/111111111111", "mapping a")
+    publish.commit_all(repo, "mapping a")
 
     publish.checkout_base(repo, "main")
+    publish.create_branch(repo, "sync/b/222222222222")
     (repo / "b.txt").write_text("b\n")
-    publish.commit_to_branch(repo, "sync/b/222222222222", "mapping b")
+    publish.commit_all(repo, "mapping b")
 
     assert not _is_ancestor(repo, "sync/a/111111111111", "sync/b/222222222222")
 
@@ -87,14 +67,13 @@ def test_branch_exists_checks_the_remote_too(tmp_path):
     assert publish.branch_exists(fresh, "sync/x/does-not-exist") is False
 
 
-def test_commit_to_branch_credits_the_given_author_but_keeps_the_bot_as_committer(tmp_path):
+def test_commit_all_credits_the_given_author_but_keeps_the_bot_as_committer(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
+    publish.create_branch(repo, "sync/x/abc123")
     (repo / "file.txt").write_text("changed\n")
 
-    publish.commit_to_branch(
-        repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>"
-    )
+    publish.commit_all(repo, "real message", author="Jane Dev <jane@example.com>")
 
     author = subprocess.run(
         ["git", "log", "-1", "--pretty=%an <%ae>"],
@@ -113,51 +92,8 @@ def test_commit_to_branch_credits_the_given_author_but_keeps_the_bot_as_committe
 
     assert author == "Jane Dev <jane@example.com>"
     # _git_id()'s default bot identity -- author= only overrides the Author field,
-    # commit_to_branch's own -c user.name/user.email (the Committer) is untouched.
+    # commit_all's own -c user.name/user.email (the Committer) is untouched.
     assert committer == "sync-service[bot] <sync-service@users.noreply.github.com>"
-
-
-def test_reword_commit_preserves_the_original_author(tmp_path):
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "file.txt").write_text("changed\n")
-    publish.commit_to_branch(
-        repo, "sync/x/abc123", "placeholder", author="Jane Dev <jane@example.com>"
-    )
-
-    publish.reword_commit(repo, "Sync x changes")
-
-    author = subprocess.run(
-        ["git", "log", "-1", "--pretty=%an <%ae>"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert author == "Jane Dev <jane@example.com>"  # --amend without --author keeps it
-
-
-def test_reword_commit_changes_message_without_touching_the_tree(tmp_path):
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "file.txt").write_text("changed\n")
-    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
-
-    tree_before = subprocess.run(
-        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout
-
-    publish.reword_commit(repo, "Sync x changes\n\nsync: x @ abc123")
-
-    message = subprocess.run(
-        ["git", "log", "-1", "--pretty=%B"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout
-    tree_after = subprocess.run(
-        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout
-
-    assert message.strip() == "Sync x changes\n\nsync: x @ abc123"
-    assert tree_after == tree_before  # amending the message never touches the actual content
 
 
 def test_slugify_produces_a_safe_readable_branch_segment():
@@ -179,8 +115,9 @@ def test_slugify_caps_length_without_trailing_hyphen():
 def test_rename_branch_swaps_the_current_branch_name(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
+    publish.create_branch(repo, "sync/x/abc123")
     (repo / "file.txt").write_text("changed\n")
-    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
+    publish.commit_all(repo, "a real commit")
 
     publish.rename_branch(repo, "sync/x/abc123-fix-the-thing")
 
@@ -191,8 +128,9 @@ def test_rename_branch_swaps_the_current_branch_name(tmp_path):
 def test_already_synced_is_false_until_recorded(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
+    publish.create_branch(repo, "sync/x/abc123")
     (repo / "file.txt").write_text("changed\n")
-    publish.commit_to_branch(repo, "sync/x/abc123", "mechanical placeholder")
+    publish.commit_all(repo, "a real commit")
     publish.rename_branch(repo, "some-clean-title-slug")
 
     assert not publish.already_synced(repo, "x", "abc123def456")  # pragma: allowlist secret
@@ -257,9 +195,9 @@ def test_create_branch_then_commit_all_supports_multiple_commits_on_one_branch(t
 
 
 def test_commit_all_returns_false_and_leaves_branch_when_nothing_changed(tmp_path):
-    # Unlike commit_to_branch, commit_all never tears the branch down itself --
-    # the replay loop needs the branch to still be there for the *next* commit
-    # in the batch even if this particular step was a no-op.
+    # commit_all never tears the branch down itself -- the replay loop needs
+    # the branch to still be there for the *next* commit in the batch even if
+    # this particular step was a no-op.
     repo = tmp_path / "repo"
     _init_repo(repo)
     publish.create_branch(repo, "sync/x/abc123")

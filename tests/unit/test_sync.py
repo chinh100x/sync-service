@@ -3,6 +3,7 @@ import subprocess
 
 from sync_service import sync
 from sync_service.lib import llm_client, notify, safety_review
+from sync_service.lib.config import BreakCheck, Mapping
 
 GIT_ID = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
 
@@ -31,7 +32,15 @@ def _write(repo, rel, text):
     p.write_text(text)
 
 
-def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
+def test_commit_message_reaches_the_far_side_when_llm_safety_review_is_disabled(tmp_path):
+    # Deliberate tradeoff, not a regression: every replayed commit's real
+    # message is used as-is once it clears secretscan + safety_review (see
+    # _replay_one_commit). With llm_safety_review off, the only check left is
+    # secretscan -- credential-shaped patterns only. A business-context leak
+    # like a customer/deal name in prose is exactly the category secretscan
+    # structurally can't catch; that's what llm_safety_review exists for. See
+    # test_replay_commits_halts_the_whole_batch_when_a_later_message_is_unsafe
+    # for the case where llm_safety_review IS enabled and catches this instead.
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -56,8 +65,6 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
     base = _commit(prod, "initial")
 
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
-    # The commit message itself is the leak vector under test -- it must never appear
-    # verbatim in the far-side commit message or the PR title/dry-run output.
     head = _commit(
         prod, f"Fix {SENSITIVE_TEXT}\n\nCustomer uses /CO3/RockyMountain/IC/ internally."
     )
@@ -81,19 +88,12 @@ def test_sensitive_commit_message_never_reaches_the_far_side(tmp_path, capsys):
         ]
     )
 
-    printed = capsys.readouterr().out
-    assert SENSITIVE_TEXT not in printed
-    assert "RockyMountain" not in printed
-
-    # DeterministicPRWriter's title ("Sync portmon changes", no LLM configured here)
-    # slugifies to this branch name -- see publish.slugify and sync.py's rename_branch call.
     branch = "sync-portmon-changes"
     far_side_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
-    assert SENSITIVE_TEXT not in far_side_message
-    assert "RockyMountain" not in far_side_message
+    assert SENSITIVE_TEXT in far_side_message
 
 
-def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_string(tmp_path):
+def test_far_side_commit_keeps_its_own_message_pr_gets_a_generated_title_separately(tmp_path):
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -122,7 +122,7 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
     _write(oss, "README.md", "# oss\n")
     _commit(oss, "initial")
 
-    sync.main(
+    exit_code = sync.main(
         [
             "run",
             "--config",
@@ -142,14 +142,12 @@ def test_far_side_commit_subject_is_the_generated_title_not_the_mechanical_strin
     subject = _git(oss, "log", "-1", "--pretty=%s", branch).stdout.strip()
     full_message = _git(oss, "log", "-1", "--pretty=%B", branch).stdout
 
-    # No LLM enabled here -- DeterministicPRWriter's title, not the old mechanical
-    # "sync: portmon @ <sha>" subject line.
-    assert subject == "Sync portmon changes"
-    # The mechanical "sync: <key> @ <sha>" trailer is gone entirely (v19) -- the
-    # commit message is just the title, full stop; the sha still lives in the
-    # branch name itself.
-    assert full_message.strip() == "Sync portmon changes"
-    assert "sync: portmon @" not in full_message
+    # The replayed commit keeps the real source commit's own message, full stop --
+    # the generated title (DeterministicPRWriter's "Sync portmon changes", no LLM
+    # configured here) is used for the PR itself only, never to overwrite it.
+    assert exit_code == 0
+    assert subject == "change"
+    assert full_message.strip() == "change"
 
 
 def test_far_side_commit_author_credits_the_real_prod_committer(tmp_path):
@@ -340,7 +338,12 @@ def test_skipped_exists_notifies_slack_with_the_reason(tmp_path, monkeypatch):
     assert "idempotent re-run" in captured[0]
 
 
-def test_empty_mapping_notifies_slack_with_the_reason(tmp_path, monkeypatch):
+def test_a_commit_that_only_touches_excluded_files_is_a_no_op_not_a_halt(tmp_path, monkeypatch):
+    # A commit touches mapping.source (so commits_between finds it and the loop
+    # runs), but every path it changed is exclude-filtered inside
+    # _replay_one_commit -- resolves as a no-op step, same as "unchanged", not
+    # a distinct outcome. ("empty" is reserved for no commits touching
+    # mapping.source at all -- see test_no_commits_under_source_notifies_empty.)
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -356,8 +359,7 @@ def test_empty_mapping_notifies_slack_with_the_reason(tmp_path, monkeypatch):
         "  - key: portmon\n"
         "    source: src/portmon\n"
         "    dest: plugin\n"
-        # The only file under source is excluded -- scrub.apply() ends up with
-        # nothing to propagate even though the mapping's own path was touched.
+        # The only file under source is excluded.
         "    exclude: [src/portmon/covenant.py]\n"
         "    break_check:\n"
         '      install: "true"\n'
@@ -391,7 +393,56 @@ def test_empty_mapping_notifies_slack_with_the_reason(tmp_path, monkeypatch):
 
     assert exit_code == 0
     assert len(captured) == 1
-    assert "nothing under src/portmon/ to propagate" in captured[0]
+    assert "nothing to commit" in captured[0]
+
+
+def test_no_commits_under_source_notifies_empty(tmp_path, monkeypatch):
+    # base == head is the simplest way to get an empty commit range. Calling
+    # run_mapping() directly rather than through sync.main(): if diff.match's
+    # top-level trigger genuinely found nothing touched, main() wouldn't call
+    # run_mapping at all (a different, already-covered no-op path) -- this
+    # test is specifically about run_mapping's own "empty" branch once it's
+    # been invoked for a mapping with zero commits in range.
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "src/portmon/covenant.py", "def check():\n    return True\n")
+    base = _commit(prod, "initial")
+    head = base  # no commits at all between base and head
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    captured = []
+    monkeypatch.setattr(notify.slack, "post", lambda text: captured.append(text) or True)
+
+    mapping = Mapping(
+        key="portmon",
+        source="src/portmon",
+        dest="plugin",
+        break_check=BreakCheck(install="true", run="true"),
+    )
+    outcome = sync.run_mapping(
+        mapping=mapping,
+        source_repo=prod,
+        dest_repo=oss,
+        base_sha=base,
+        head_sha=head,
+        base_branch="main",
+        gh_token=None,
+        llm_pr_enabled=False,
+        llm_safety_review_enabled=False,
+        llm_safety_review_additional_context=None,
+        project_name=None,
+    )
+
+    assert outcome == "empty"
+    assert len(captured) == 1
+    assert "no commits under src/portmon/" in captured[0]
 
 
 def test_unchanged_notifies_slack_with_the_reason(tmp_path, monkeypatch):
@@ -419,7 +470,7 @@ def test_unchanged_notifies_slack_with_the_reason(tmp_path, monkeypatch):
     base = _commit(prod, "initial")
     # A real change from base to head (git commit needs a real diff to succeed),
     # but the OSS side is pre-seeded with exactly what this change scrubs to --
-    # so diff.match() fires, yet commit_to_branch finds nothing new to commit.
+    # so diff.match() fires, yet commit_all finds nothing new to commit.
     _write(prod, "src/portmon/covenant.py", "def check():\n    return False\n")
     head = _commit(prod, "change")
 
@@ -630,8 +681,8 @@ def test_project_name_replaces_mechanical_label_in_slack_messages(tmp_path, monk
     assert "sync:portmon" not in slack_messages[0]
 
 
-# --- replay_commits: true -- one OSS commit per source commit, not one squashed
-# commit per run. See plan2.md for the design this implements. -------------------
+# --- One OSS commit per source commit, keeping each one's own message/author,
+# not one squashed commit per run. ---------------------------------------------
 
 
 class _FakeResponse:
@@ -666,7 +717,6 @@ def _replay_config(*, llm_safety_review_enabled=False):
         "  - key: portmon\n"
         "    source: src/portmon\n"
         "    dest: plugin\n"
-        "    replay_commits: true\n"
         "    break_check:\n"
         '      install: "true"\n'
         '      run: "true"\n'
@@ -851,7 +901,6 @@ def test_replay_commits_never_leaves_a_raw_pre_redaction_blob_in_the_oss_git_dat
         "  - key: portmon\n"
         "    source: src/portmon\n"
         "    dest: plugin\n"
-        "    replay_commits: true\n"
         "    redact:\n"
         "      - pattern: RAW_SENSITIVE_MARKER\n"
         "        replace: <REDACTED>\n"
@@ -968,8 +1017,8 @@ def test_replay_commits_halts_on_a_submodule_with_nothing_committed(tmp_path):
 
 
 def test_replay_commits_skips_binary_content_without_halting(tmp_path):
-    # Matches scrub.apply()'s own existing policy for the snapshot path:
-    # binary files are silently never propagated, not a halt.
+    # Binary files are silently never propagated -- there's no mechanical way
+    # to redact them, but that alone doesn't warrant halting the batch.
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()

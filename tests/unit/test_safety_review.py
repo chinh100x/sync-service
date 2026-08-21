@@ -418,8 +418,8 @@ def test_enabled_and_blocked_halts_with_exit_0_not_a_tool_failure(tmp_path, monk
     )
 
     assert exit_code == 0  # correct policy enforcement, not a tool failure
-    # Blocked before commit_to_branch ever runs, so no branch was created under this
-    # sha prefix at all -- glob, since a real branch (if any existed) would carry a
+    # Blocked before any commit is made, so no branch was created under this sha
+    # prefix at all -- glob, since a real branch (if any existed) would carry a
     # title-derived slug suffix we don't know here.
     branch_prefix = f"sync/portmon/{head[:7]}"
     assert not _git(oss, "branch", "--list", f"{branch_prefix}*").stdout.strip()

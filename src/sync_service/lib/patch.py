@@ -144,9 +144,10 @@ class ResolvedChange:
     - "write": still exists and is readable text -- `content` is its raw
       (not-yet-redacted) value at this commit.
     - "delete": no longer exists at this commit.
-    - "skip": exists but can't be decoded as text (binary) -- never
-      propagated, same policy scrub.apply() already uses for the snapshot
-      path (silently excluded, not a halt)."""
+    - "skip": exists but can't be decoded as text (binary) -- silently
+      excluded, never propagated, not a halt (there's no mechanical way to
+      redact binary content, but a halt isn't warranted just because a file
+      happens to be binary)."""
 
     dest_path: str
     kind: str

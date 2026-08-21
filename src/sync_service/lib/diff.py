@@ -50,7 +50,7 @@ def commit_message(repo_path: str | Path, sha: str) -> str:
 
 def candidate_diff(dest_repo: str | Path, base_branch: str, branch: str) -> str:
     """Diff entirely within dest_repo's own history -- never reads the production
-    repo, so it only shows what scrub.apply() already wrote. Feeds pr_writer.py's
+    repo, so it only shows what was already committed there. Feeds pr_writer.py's
     sanitized_diff."""
     proc = subprocess.run(
         ["git", "diff", f"{base_branch}..{branch}"],

@@ -1,14 +1,31 @@
 # sync-service
 
-A production -> open source sync service. A commit to the production repo's
-default branch scrubs production-specific detail, confirms the OSS repo still
-installs and runs with the change applied, and opens a PR — nothing
-auto-merges.
+A production -> open source sync service. Each production commit that touches
+a mapped path becomes its own commit on the OSS side — same message, same
+author — after production-specific detail is scrubbed and the OSS repo is
+confirmed to still install and run with the change applied. Opens one PR
+covering the whole push; nothing auto-merges.
 
 **No divergence detection** — a run always overwrites the OSS repo's tracked
 files with production's current content. If the OSS side has its own edits
 outside this tool, they're overwritten with no warning. That's a deliberate
 tradeoff (simplicity over conflict-tracking), not a bug.
+
+**How each commit is resolved** — `patch.py` never parses git's unified-diff
+text. For each source commit it asks git structurally what changed (`git diff
+--name-only`), whether each path still exists and isn't a submodule (`git
+ls-tree`), and its content right now (`git show <sha>:<path>`) — so there's no
+hand-rolled handling of renames/copies/quoted paths/binary markers to get
+wrong. Content is redacted in memory before it's ever written into the OSS
+checkout, so an unredacted value never touches the OSS repo's working tree or
+git object database, even transiently. The same secretscan/safety-review gates
+that run against a commit's files also run against that commit's own message
+before it's used as-is — the one piece of content that has no mechanical
+redaction step of its own, so those checks are what stand between it and the
+far side. All-or-nothing: a gate failure on any commit in a push halts the
+whole batch and discards every commit made so far — nothing partial ever
+reaches `origin`. A binary file is silently skipped (no mechanical way to
+redact it); a submodule halts the batch (no file content to scrub at all).
 
 *OSS -> production (the reverse direction) isn't implemented yet — planned for later.*
 
@@ -24,8 +41,8 @@ src/sync_service/
 └── lib/
     ├── config.py         pydantic schema for the sync/*.yaml mapping config
     ├── diff.py           which mappings did base..head touch (the trigger)
-    ├── scrub.py          exclude list + regex substitution (redact)
-    ├── patch.py          per-commit change resolution (what changed, its content, remapped path) for `replay_commits: true` mappings (see below)
+    ├── scrub.py          regex substitution (redact) against one file's content in memory
+    ├── patch.py          per-commit change resolution: what changed, its content, remapped path (see above)
     ├── secretscan.py     built-in secret-scan gate — swap for `gitleaks` before deploying against a real repo (see below)
     ├── breakcheck.py     runs break_check.install / .run before a PR is opened (the break check)
     ├── llm_client.py     shared OpenAI structured-output call used by pr_writer.py/safety_review.py
@@ -139,7 +156,6 @@ What each piece does, and what happens if you leave it out:
 
 - **`source`/`dest`** are optional in a mapping — omit both to track the whole repo instead of a subdirectory. Anything that shouldn't cross needs its own entry in `exclude` (exact paths only, no wildcards).
 - **`public_reason`** — optional, human-authored line explaining why this mapping propagates; shows up in the PR body.
-- **`replay_commits`** — **off by default**. Off (today's behavior): one OSS commit per sync run, no matter how many production commits are in `base..head`, with a mechanical placeholder message (later reworded to the generated PR title). On: one real OSS commit *per production commit*, each keeping its own original message and author. For each commit, `patch.py` asks git structurally what changed (`git diff --name-only`), whether each path still exists and isn't a submodule (`git ls-tree`), and its current content (`git show <sha>:<path>`) — no unified-diff text parsing at all, so there's no hand-rolled handling of renames/copies/quoted paths/binary markers to get wrong. Content is redacted in memory before it's ever written into the OSS checkout, so an unredacted value never touches the OSS repo's working tree or git object database, even transiently. This also means create/update/delete parity comes for free, and — like the snapshot path already does, deliberately, per this README's own opening lines — a run always overwrites, with no divergence detection. Runs the same secretscan/safety-review gates per commit, plus the same two gates against each commit's own message (never checked at all in the default mode, since the placeholder message never carries anything real). A binary file is silently skipped (matches the snapshot path's existing policy); a submodule halts the whole batch (no file content to scrub). All-or-nothing: a gate failure on any commit in the batch halts the whole batch and discards every commit made so far in that run — nothing partial ever reaches `origin`.
 - **Human-readable PR titles/bodies via an LLM** (`pr_writer.py`) — **on by default**, no config needed to enable it. Advisory only, never part of the sync/security decision: on any failure, timeout, or missing `OPENAI_API_KEY`, it falls back to a plain deterministic title/body (`Sync <mapping> changes`, a bare file list) — OpenAI is never a hard dependency of the sync itself. Set `llm_pr: { enabled: false }` in the config to skip the LLM call outright.
 - **`llm_safety_review.enabled`** — **on by default**. The opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict (missing/bad key, timeout, malformed output, content too large) is a hard halt, no PR, never treated as a pass — so with this on, `openai-api-key` is effectively required; every sync halts without a working key rather than silently skipping the review. Catches what a regex can't — a real customer name, an internal codename, proprietary logic described in a comment. Set `llm_safety_review: { enabled: false }` to skip the review outright for a mapping that has no OpenAI dependency to spare.
 - **`llm_safety_review.additional_context`** — optional, project-specific "also watch for this" text — appended to the reviewer's fixed base prompt, never replacing it, so the built-in invariants (never quote the actual sensitive value, bias toward blocking when uncertain) can't be weakened by config.
@@ -153,7 +169,7 @@ Two things worth knowing about `base`/`head`:
 
 ### 3. Swap the built-in secret scanner for gitleaks
 
-`src/sync_service/secretscan.py` ships a handful of built-in regexes so local development has zero external dependencies. Real deployment should use [`gitleaks`](https://github.com/gitleaks/gitleaks) instead: write the `desired` dict out to a scratch directory and shell out to `gitleaks detect --no-git --source <dir>`, treating a non-zero exit as a hit (same halt path, just a stronger gate). Do this before pointing the workflow at a repo with real sensitive data in it.
+`src/sync_service/secretscan.py` ships a handful of built-in regexes so local development has zero external dependencies. Real deployment should use [`gitleaks`](https://github.com/gitleaks/gitleaks) instead: write each commit's resolved file contents out to a scratch directory and shell out to `gitleaks detect --no-git --source <dir>`, treating a non-zero exit as a hit (same halt path, just a stronger gate). Do this before pointing the workflow at a repo with real sensitive data in it.
 
 ### 4. Roll out order
 
