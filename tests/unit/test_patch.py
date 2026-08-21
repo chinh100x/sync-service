@@ -168,17 +168,19 @@ def test_resolve_change_delete_when_path_no_longer_exists_at_sha(tmp_path):
     assert change.content is None
 
 
-def test_resolve_change_skip_for_binary_content(tmp_path):
+def test_resolve_change_write_binary_for_binary_content(tmp_path):
     repo = tmp_path / "repo"
     _init_repo(repo)
     _write(repo, "readme.txt", "hello\n")
     _commit(repo, "initial")
-    (repo / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    raw = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+    (repo / "img.png").write_bytes(raw)
     head = _commit(repo, "add binary")
 
     change = patch.resolve_change(repo, head, ".", ".", "img.png")
 
-    assert change.kind == "skip"
+    assert change.kind == "write_binary"
+    assert change.raw == raw
     assert change.content is None
 
 

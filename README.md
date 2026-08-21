@@ -24,8 +24,15 @@ before it's used as-is — the one piece of content that has no mechanical
 redaction step of its own, so those checks are what stand between it and the
 far side. All-or-nothing: a gate failure on any commit in a push halts the
 whole batch and discards every commit made so far — nothing partial ever
-reaches `origin`. A binary file is silently skipped (no mechanical way to
-redact it); a submodule halts the batch (no file content to scrub at all).
+reaches `origin`. A binary file (image, font, packaged asset) propagates
+as-is — no redact (regex doesn't apply to bytes) and no semantic
+safety-review (nothing textual for an LLM to judge), though secretscan still
+runs against it via a lossless byte-preserving decode, so an embedded
+ASCII credential-shaped string is still catchable. This is a real,
+deliberate reduction in gate coverage for that content, disclosed in the PR
+body's own "Binary Files (Not Scanned)" section every time it applies —
+never silent. A submodule halts the batch instead (no file content at all
+to represent).
 
 *OSS -> production (the reverse direction) isn't implemented yet — planned for later.*
 

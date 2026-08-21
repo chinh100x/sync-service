@@ -143,15 +143,21 @@ class ResolvedChange:
     `kind`:
     - "write": still exists and is readable text -- `content` is its raw
       (not-yet-redacted) value at this commit.
-    - "delete": no longer exists at this commit.
-    - "skip": exists but can't be decoded as text (binary) -- silently
-      excluded, never propagated, not a halt (there's no mechanical way to
-      redact binary content, but a halt isn't warranted just because a file
-      happens to be binary)."""
+    - "write_binary": still exists but can't be decoded as text -- `raw` is
+      its raw bytes. Propagates as-is: there's no mechanical way to redact
+      binary content (regex substitution doesn't apply to bytes), and no way
+      to run safety_review's semantic review on it either (an LLM has
+      nothing meaningful to judge in raw bytes). secretscan still runs
+      against it (see sync.py) -- a credential-shaped ASCII string embedded
+      in an otherwise-binary file is still catchable by regex even without
+      valid UTF-8. Callers must surface this explicitly (never silently) --
+      it's a real, deliberate reduction in gate coverage for this content.
+    - "delete": no longer exists at this commit."""
 
     dest_path: str
     kind: str
     content: str | None = None
+    raw: bytes | None = None
 
 
 def resolve_change(
@@ -177,5 +183,5 @@ def resolve_change(
     try:
         content = proc.stdout.decode()
     except UnicodeDecodeError:
-        return ResolvedChange(dest_path=dest_path, kind="skip")
+        return ResolvedChange(dest_path=dest_path, kind="write_binary", raw=proc.stdout)
     return ResolvedChange(dest_path=dest_path, kind="write", content=content)

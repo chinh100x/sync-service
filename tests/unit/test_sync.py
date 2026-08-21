@@ -1016,9 +1016,11 @@ def test_replay_commits_halts_on_a_submodule_with_nothing_committed(tmp_path):
     assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
 
 
-def test_replay_commits_skips_binary_content_without_halting(tmp_path):
-    # Binary files are silently never propagated -- there's no mechanical way
-    # to redact them, but that alone doesn't warrant halting the batch.
+def test_replay_commits_propagates_binary_content_unscrubbed_and_discloses_it(tmp_path, capsys):
+    # No mechanical way to redact binary content (regex doesn't apply to
+    # bytes) or run safety_review on it (nothing textual to judge) -- it
+    # propagates as-is rather than being dropped, with the tradeoff disclosed
+    # in the PR body (never silent) and in the run's own log output.
     prod = tmp_path / "prod"
     oss = tmp_path / "oss"
     prod.mkdir()
@@ -1029,8 +1031,43 @@ def test_replay_commits_skips_binary_content_without_halting(tmp_path):
     _write(prod, "sync/monitoring.yaml", _replay_config())
     base = _commit(prod, "initial")
     _write(prod, "src/portmon/a.py", "1\n")
-    (prod / "src" / "portmon" / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    raw = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+    (prod / "src" / "portmon" / "img.png").write_bytes(raw)
     head = _commit(prod, "add a text file and a binary file")
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+    printed = capsys.readouterr().out
+
+    assert exit_code == 0
+    branch = "sync-portmon-changes"
+    _git(oss, "checkout", branch)
+    assert (oss / "plugin" / "a.py").read_text() == "1\n"
+    assert (oss / "plugin" / "img.png").read_bytes() == raw  # propagated byte-for-byte
+    assert "propagating 1 binary file(s)" in printed
+    assert "## Binary Files (Not Scanned)" in printed
+    assert "plugin/img.png" in printed
+
+
+def test_replay_commits_still_secretscans_binary_content_via_a_latin1_view(tmp_path):
+    # Binary content still joins the secret-scan gate -- an ASCII
+    # credential-shaped substring embedded in otherwise-binary bytes is still
+    # catchable via a lossless latin-1 decode, even without valid UTF-8.
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    base = _commit(prod, "initial")
+    fake_key = b"AKIAABCDEFGHIJKLMNOP"  # pragma: allowlist secret
+    (prod / "src" / "portmon").mkdir(parents=True)
+    (prod / "src" / "portmon" / "asset.bin").write_bytes(b"\x89\x00\x01" + fake_key + b"\x02\xff")
+    head = _commit(prod, "add a binary asset with an embedded key-shaped string")
 
     _write(oss, "README.md", "# oss\n")
     _commit(oss, "initial")
@@ -1038,7 +1075,5 @@ def test_replay_commits_skips_binary_content_without_halting(tmp_path):
     exit_code = _run(prod, oss, base, head)
 
     assert exit_code == 0
-    branch = "sync-portmon-changes"
-    _git(oss, "checkout", branch)
-    assert (oss / "plugin" / "a.py").read_text() == "1\n"
-    assert not (oss / "plugin" / "img.png").exists()
+    assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
+    assert "plugin/asset.bin" not in _git(oss, "ls-files").stdout

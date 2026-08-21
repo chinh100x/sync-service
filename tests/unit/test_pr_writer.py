@@ -33,6 +33,7 @@ def _make_context(
     changed_files: list[str] | None = None,
     sanitized_diff: str = "+def check():\n+    return True\n",
     scrubbed_categories: list[str] | None = None,
+    unscrubbed_binary_files: list[str] | None = None,
     validation: pr_writer.ValidationSummary | None = None,
 ) -> pr_writer.PRContext:
     return pr_writer.PRContext(
@@ -43,6 +44,7 @@ def _make_context(
         scrubbed_categories=(
             scrubbed_categories if scrubbed_categories is not None else ["internal_endpoint"]
         ),
+        unscrubbed_binary_files=unscrubbed_binary_files or [],
         validation=validation or pr_writer.ValidationSummary(run_command="pytest tests/ -v"),
     )
 
@@ -302,6 +304,29 @@ def test_render_markdown_change_types_checklist_is_a_closed_set():
     # there is no way for `generated` to add an extra line here.
     assert checklist.count("- [") == len(pr_writer._CHANGE_TYPE_LABELS)
     assert "- [x] 🛠 Refactor" in checklist
+
+
+def test_render_markdown_discloses_unscrubbed_binary_files():
+    # Built from context, same reason as Test Plan -- a security-relevant
+    # disclosure that must appear regardless of which writer ran, never left
+    # to the LLM to remember to mention.
+    generated = _generated()
+    context = _make_context(unscrubbed_binary_files=["plugin/logo.png", "plugin/font.woff"])
+
+    body = pr_writer.render_markdown(generated, context)
+
+    assert "## Binary Files (Not Scanned)" in body
+    assert "plugin/logo.png" in body
+    assert "plugin/font.woff" in body
+
+
+def test_render_markdown_omits_binary_section_when_nothing_binary_changed():
+    generated = _generated()
+    context = _make_context(unscrubbed_binary_files=[])
+
+    body = pr_writer.render_markdown(generated, context)
+
+    assert "Binary Files" not in body
 
 
 # --- sync.py integration: what actually gets sent to the model ---------------------

@@ -49,7 +49,7 @@ def _replay_one_commit(
     sha: str,
     llm_safety_review_enabled: bool,
     llm_safety_review_additional_context: str | None,
-) -> tuple[bool, list[str], list[str]] | str:
+) -> tuple[bool, list[str], list[str], list[str]] | str:
     """One step of the replay loop: resolve this commit's changed paths, redact
     + scan the result, scan its message, then write/delete and commit -- or
     return a halt reason string on the first thing that doesn't pass (a policy
@@ -58,20 +58,28 @@ def _replay_one_commit(
     docstring) -- every write is an unconditional overwrite; there's no
     divergence detection.
 
+    Binary content (write_binary) propagates as-is -- no redact (regex
+    doesn't apply to bytes), no safety_review (nothing semantic for an LLM to
+    judge in raw bytes). secretscan still runs against it via a latin-1
+    decode, which never raises and preserves every byte 1:1, so an ASCII
+    credential-shaped substring embedded in otherwise-binary content is still
+    catchable. This is a real, deliberate reduction in gate coverage for that
+    content -- surfaced via the returned `binary_paths`, never silent.
+
     Raises safety_review.SafetyReviewUnavailable uncaught -- an infra failure,
     not a policy decision; the caller (run_mapping's loop) catches it
     separately to produce a distinct exit-1 outcome instead of a generic halt.
 
-    Success returns (committed, scrubbed_categories, touched_paths); `committed`
-    is False for a commit that scoped down to nothing after exclude-filtering
-    (still not a halt -- just a no-op step)."""
+    Success returns (committed, scrubbed_categories, touched_paths,
+    binary_paths); `committed` is False for a commit that scoped down to
+    nothing after exclude-filtering (still not a halt -- just a no-op step)."""
     changed = [
         p
         for p in patch.changed_paths(source_repo, sha, mapping.source)
         if not patch.is_excluded(p, mapping.exclude)
     ]
     if not changed:
-        return (False, [], [])
+        return (False, [], [], [])
 
     try:
         resolved = [
@@ -85,29 +93,42 @@ def _replay_one_commit(
 
     categories: set[str] = set()
     written: list[str] = []
+    written_binary: list[str] = []
     deleted: list[str] = []
     for change in resolved:
-        if change.kind == "skip":
-            continue  # binary -- never propagated, no mechanical redaction possible
         dest_file = dest_repo / change.dest_path
         if change.kind == "delete":
             dest_file.unlink(missing_ok=True)
             deleted.append(change.dest_path)
             continue
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        if change.kind == "write_binary":
+            assert change.raw is not None  # guaranteed by ResolvedChange's "write_binary" contract
+            dest_file.write_bytes(change.raw)
+            written_binary.append(change.dest_path)
+            continue
         assert change.content is not None  # guaranteed by ResolvedChange's "write" contract
         redacted, fired = scrub.redact_text(change.content, mapping.redact)
         categories |= set(fired)
-        dest_file.parent.mkdir(parents=True, exist_ok=True)
         dest_file.write_text(redacted)
         written.append(change.dest_path)
 
-    if not written and not deleted:
-        return (False, [], [])
+    if not written and not written_binary and not deleted:
+        return (False, [], [], [])
+
+    if written_binary:
+        print(
+            f"[sync:{mapping.key}] propagating {len(written_binary)} binary file(s) "
+            f"as-is (no redact/safety_review possible): {', '.join(written_binary)}"
+        )
 
     # --- secretscan.py + safety_review.py: the hard secret-scan gate and the
-    # semantic gate, against just what this commit actually wrote. ---
+    # semantic gate, against just what this commit actually wrote. Binary
+    # content joins the secretscan pass (via a lossless latin-1 view) but not
+    # safety_review, which needs real text to make a semantic judgment. ---
     file_contents = {p: (dest_repo / p).read_text() for p in written}
-    hits = secretscan.scan(file_contents)
+    binary_scan_view = {p: (dest_repo / p).read_bytes().decode("latin-1") for p in written_binary}
+    hits = secretscan.scan({**file_contents, **binary_scan_view})
     if hits:
         return f"secret scan hit: {hits[0]['rule']} in {hits[0]['path']}"
 
@@ -152,7 +173,7 @@ def _replay_one_commit(
 
     author = diff.commit_author(source_repo, sha)
     committed = publish.commit_all(dest_repo, message=message, author=author)
-    return (committed, sorted(categories), written + deleted)
+    return (committed, sorted(categories), written + written_binary + deleted, written_binary)
 
 
 def run_mapping(
@@ -219,6 +240,7 @@ def run_mapping(
     replayed = 0
     all_touched: set[str] = set()
     all_categories: set[str] = set()
+    all_binary: set[str] = set()
     for sha in commits:
         try:
             outcome = _replay_one_commit(
@@ -250,9 +272,10 @@ def run_mapping(
                 f"{sha[:12]} -- {outcome}. Halted, no PR.",
                 "replay-halt",
             )
-        committed, categories, touched = outcome
+        committed, categories, touched, binary_paths = outcome
         all_categories |= set(categories)
         all_touched |= set(touched)
+        all_binary |= set(binary_paths)
         if committed:
             replayed += 1
         print(f"[sync:{mapping.key}] replayed {sha[:12]} ({'committed' if committed else 'no-op'})")
@@ -294,6 +317,7 @@ def run_mapping(
         project_label=project_label,
         changed_files=sorted(all_touched),
         scrubbed_categories=sorted(all_categories),
+        unscrubbed_binary_files=sorted(all_binary),
         llm_pr_enabled=llm_pr_enabled,
         gh_token=gh_token,
     )
@@ -309,6 +333,7 @@ def _finalize_and_publish(
     project_label: str,
     changed_files: list[str],
     scrubbed_categories: list[str],
+    unscrubbed_binary_files: list[str],
     llm_pr_enabled: bool,
     gh_token: str | None,
 ) -> str:
@@ -325,6 +350,7 @@ def _finalize_and_publish(
         changed_files=changed_files,
         sanitized_diff=diff.candidate_diff(dest_repo, base_branch, branch),
         scrubbed_categories=scrubbed_categories,
+        unscrubbed_binary_files=unscrubbed_binary_files,
         validation=pr_writer.ValidationSummary(run_command=mapping.break_check.run),
     )
     title, body = pr_writer.build_pr_content(context, llm_enabled=llm_pr_enabled)
