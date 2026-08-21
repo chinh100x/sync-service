@@ -26,7 +26,7 @@ inputs:
       repo. Powers a real GitHub comment on the source commit for every
       halt/error (notify.py); without it, that notification still happens via
       the Action's own log and Slack (if configured), just not as a comment
-      on the commit itself. In a typical org deployment, `${{ secrets.GITHUB_TOKEN }}`
+      on the commit itself. In a typical org deployment, secrets.GITHUB_TOKEN
       (the workflow's own ambient token, already scoped to the repo it runs
       in) is the right value here -- just confirm the job's `permissions:`
       grants `contents: write` (some orgs default GITHUB_TOKEN to read-only).
