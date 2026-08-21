@@ -434,6 +434,7 @@ def test_no_commits_under_source_notifies_empty(tmp_path, monkeypatch):
         head_sha=head,
         base_branch="main",
         gh_token=None,
+        source_gh_token=None,
         llm_pr_enabled=False,
         llm_safety_review_enabled=False,
         llm_safety_review_additional_context=None,
@@ -979,6 +980,55 @@ def test_replay_commits_overwrites_a_divergent_oss_file_with_no_halt(tmp_path):
     assert _git(oss, "branch", "--list", branch).stdout.strip()
     _git(oss, "checkout", branch)
     assert (oss / "plugin" / "covenant.py").read_text() == "def check():\n    return True\n"
+
+
+def test_replay_commits_halts_on_a_mixed_range_with_a_real_merge_conflict(tmp_path):
+    # Verified empirically before writing this: replaying just the two
+    # individual parent commits of a real merge conflict does NOT reproduce
+    # the human-resolved final content -- it lands on whichever parent
+    # replayed last (here, "main-version"), which is neither branch's value
+    # nor the actual resolution ("manually-resolved-content"). This is why
+    # a merge halts the whole batch even when non-merge commits also exist
+    # in the same range -- silently replaying just those would leave the OSS
+    # side with a *wrong* final state, not just an incomplete one.
+    prod = tmp_path / "prod"
+    oss = tmp_path / "oss"
+    prod.mkdir()
+    oss.mkdir()
+    _git(prod, "init", "-q", "-b", "main")
+    _git(oss, "init", "-q", "-b", "main")
+
+    _write(prod, "sync/monitoring.yaml", _replay_config())
+    _write(prod, "src/portmon/a.py", "1\n")
+    base = _commit(prod, "initial")
+
+    _git(prod, "checkout", "-q", "-b", "side")
+    _write(prod, "src/portmon/a.py", "side-version\n")
+    _commit(prod, "side change")
+    _git(prod, "checkout", "-q", "main")
+    _write(prod, "src/portmon/a.py", "main-version\n")
+    _commit(prod, "main change (conflict source)")
+
+    merge = subprocess.run(
+        ["git", *GIT_ID, "merge", "--no-edit", "side"],
+        cwd=prod,
+        capture_output=True,
+        text=True,
+    )
+    assert merge.returncode != 0  # a real conflict, not a clean auto-merge
+    _write(prod, "src/portmon/a.py", "manually-resolved-content\n")
+    _git(prod, "add", "-A")
+    _git(prod, "commit", "-q", "--no-edit")
+    head = _rev(prod)
+
+    _write(oss, "README.md", "# oss\n")
+    _commit(oss, "initial")
+
+    exit_code = _run(prod, oss, base, head)
+
+    assert exit_code == 0
+    assert not _git(oss, "branch", "--list", "sync-portmon-*").stdout.strip()
+    assert "plugin/a.py" not in _git(oss, "ls-files").stdout
 
 
 def test_replay_commits_halts_on_a_submodule_with_nothing_committed(tmp_path):

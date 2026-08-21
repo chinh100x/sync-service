@@ -32,12 +32,12 @@ from .lib import (
 from .lib.config import Mapping, SyncConfig
 
 
-def _halt(head_sha: str, message: str, outcome: str) -> str:
+def _halt(head_sha: str, message: str, outcome: str, source_gh_token: str | None = None) -> str:
     """Every halt notifies the same way (comment on the source commit + Slack)
     before returning its outcome string -- collapses that two-line pattern to one
     call site per gate. Skipped for the one halt (breakcheck) that has a side
     effect between notifying and returning."""
-    notify.comment_on_commit(head_sha, message)
+    notify.comment_on_commit(head_sha, message, token=source_gh_token)
     return outcome
 
 
@@ -185,6 +185,7 @@ def run_mapping(
     head_sha: str,
     base_branch: str,
     gh_token: str | None,
+    source_gh_token: str | None,
     llm_pr_enabled: bool,
     llm_safety_review_enabled: bool,
     llm_safety_review_additional_context: str | None,
@@ -213,25 +214,39 @@ def run_mapping(
             f"[{project_label}] {mapping.key}: PR already exists for this commit "
             "— skipping (idempotent re-run).",
             "skipped-exists",
+            source_gh_token,
         )
 
     # --- patch.py: which source commits does this mapping actually need to replay? ---
+    # Checked before commits_between even matters: a merge commit's own unique
+    # content (e.g. hand-resolved conflict content that exists in neither
+    # parent individually) is never captured by replaying its parents alone --
+    # confirmed empirically, not assumed. Any merge touching source halts the
+    # whole batch immediately, whether or not non-merge commits also exist in
+    # range; replaying just the non-merge commits and silently ignoring the
+    # merge would leave the OSS side with a *wrong* final state, not just an
+    # incomplete one.
+    merges = patch.merge_commits_between(source_repo, base_sha, head_sha, mapping.source)
+    if merges:
+        return _halt(
+            head_sha,
+            f"[{project_label}] {mapping.key}: {len(merges)} merge commit(s) touch "
+            f"{mapping.source}/ in this range -- replay can't linearize a merge "
+            "automatically (its own conflict-resolution content, if any, isn't "
+            "captured by replaying its parents individually). Halted, no PR.",
+            "replay-halt",
+            source_gh_token,
+        )
+
     commits = patch.commits_between(source_repo, base_sha, head_sha, mapping.source)
     if not commits:
-        if patch.merge_commits_between(source_repo, base_sha, head_sha, mapping.source):
-            return _halt(
-                head_sha,
-                f"[{project_label}] {mapping.key}: only a merge commit touches "
-                f"{mapping.source}/ in this range -- replay can't linearize a merge "
-                "automatically. Halted, no PR.",
-                "replay-halt",
-            )
         print(f"[sync:{mapping.key}] no commits under {mapping.source}/ to replay")
         return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: no commits under {mapping.source}/ in "
             "base..head — no-op, no PR.",
             "empty",
+            source_gh_token,
         )
 
     branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
@@ -261,6 +276,7 @@ def run_mapping(
                 f"[{project_label}] {mapping.key}: semantic safety review unavailable "
                 f"({exc}) -- halted out of caution, no PR.",
                 "safety-review-error",
+                source_gh_token,
             )
         if isinstance(outcome, str):
             # Discards every commit made so far this batch, not just this one --
@@ -271,6 +287,7 @@ def run_mapping(
                 f"[{project_label}] {mapping.key}: replay halted at commit "
                 f"{sha[:12]} -- {outcome}. Halted, no PR.",
                 "replay-halt",
+                source_gh_token,
             )
         committed, categories, touched, binary_paths = outcome
         all_categories |= set(categories)
@@ -291,21 +308,24 @@ def run_mapping(
             f"already on the OSS side across {len(commits)} commit(s) — nothing to "
             "commit, no PR.",
             "unchanged",
+            source_gh_token,
         )
 
     # --- breakcheck.py: runs once, against the final replayed state -- not once
     # per replayed commit. An intermediate commit is a real historical waypoint,
-    # not something that individually needs to install/build/pass on its own. ---
-    if mapping.break_check is not None:
-        check = breakcheck.run(dest_repo, mapping.break_check)
-        if not check.passed:
-            notify.comment_on_commit(
-                head_sha,
-                f"[{project_label}] {mapping.key}: break check failed at "
-                f"`{check.failed_step}`:\n```\n{check.output}\n```",
-            )
-            publish.discard_branch_and_reset(dest_repo, base_branch, branch)
-            return "breakcheck-halt"
+    # not something that individually needs to install/build/pass on its own.
+    # mapping.break_check has no default in the schema -- always present on a
+    # validly-loaded config, never None -- so this always runs. ---
+    check = breakcheck.run(dest_repo, mapping.break_check)
+    if not check.passed:
+        notify.comment_on_commit(
+            head_sha,
+            f"[{project_label}] {mapping.key}: break check failed at "
+            f"`{check.failed_step}`:\n```\n{check.output}\n```",
+            token=source_gh_token,
+        )
+        publish.discard_branch_and_reset(dest_repo, base_branch, branch)
+        return "breakcheck-halt"
 
     # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
     return _finalize_and_publish(
@@ -320,6 +340,7 @@ def run_mapping(
         unscrubbed_binary_files=sorted(all_binary),
         llm_pr_enabled=llm_pr_enabled,
         gh_token=gh_token,
+        source_gh_token=source_gh_token,
     )
 
 
@@ -336,6 +357,7 @@ def _finalize_and_publish(
     unscrubbed_binary_files: list[str],
     llm_pr_enabled: bool,
     gh_token: str | None,
+    source_gh_token: str | None,
 ) -> str:
     """The one place this tool tries to be human-readable rather than purely
     mechanical. Built only from already-scrubbed, already-validated OSS-side
@@ -368,6 +390,7 @@ def _finalize_and_publish(
             head_sha,
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
             "publish-failed",
+            source_gh_token,
         )
     # Only mark synced once publish actually succeeded -- a halt/failure must
     # still be retried on the next run, not silently skipped.
@@ -395,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
     # Removed from the environment before breakcheck.run() executes any OSS-side
     # command; only open_pr()'s one gh pr create call gets it back, explicitly.
     gh_token = os.environ.pop("GH_TOKEN", None)
+    # A *different* token from the one above: this one needs write access to the
+    # SOURCE (production) repo, to post a real comment on the commit that
+    # triggered a halt -- gh_token is scoped to the OSS repo only and can't be
+    # reused for this. Optional: notify.comment_on_commit falls back to its
+    # existing print + Slack behavior when this isn't set.
+    source_gh_token = os.environ.pop("SOURCE_GH_TOKEN", None)
 
     if args.command == "run":
         config = SyncConfig.load(args.config)
@@ -437,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
                     head_sha=args.head,
                     base_branch=args.base_branch,
                     gh_token=gh_token,
+                    source_gh_token=source_gh_token,
                     llm_pr_enabled=config.llm_pr.enabled,
                     llm_safety_review_enabled=config.llm_safety_review.enabled,
                     llm_safety_review_additional_context=config.llm_safety_review.additional_context,

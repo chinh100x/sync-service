@@ -56,7 +56,7 @@ src/sync_service/
     ├── pr_writer.py      LLM-written human-readable PR title/body. On by default; deterministic fallback on any failure or missing key.
     ├── safety_review.py  LLM semantic safety review. On by default; fails *closed* (halts) on any error — a security gate, not cosmetic.
     ├── publish.py        branch + commit + `gh pr create` (no-op detection: nothing to commit -> no PR)
-    ├── notify.py         comment on the source commit + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
+    ├── notify.py         Action-log print (always) + a real GitHub comment on the source commit (if a source-repo token is configured) + Slack post (if SLACK_WEBHOOK_URL is set) on every halt/error and PR opened
     └── slack.py          best-effort Slack Incoming Webhook post; never raises, off unless configured
 tests/unit/               one test file per module
 tests/integration/        full end-to-end scenarios through sync.main() against two local git repos — no GitHub needed
@@ -129,6 +129,10 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # contents: write so source-token (secrets.GITHUB_TOKEN below, scoped to
+    # this repo) can post a real comment on a commit that triggers a halt.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,6 +156,7 @@ jobs:
           target-repo: you-oss/portfolio-monitoring   # the OSS repo
           target-branch: main
           target-token: ${{ secrets.SYNC_SERVICE_DEST_TOKEN }}
+          source-token: ${{ secrets.GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           slack-channel: ${{ vars.SLACK_CHANNEL }}
@@ -167,6 +172,7 @@ What each piece does, and what happens if you leave it out:
 - **`llm_safety_review.enabled`** — **on by default**. The opposite failure behavior from the PR writer: this is a security gate, and any failure to get a verdict (missing/bad key, timeout, malformed output, content too large) is a hard halt, no PR, never treated as a pass — so with this on, `openai-api-key` is effectively required; every sync halts without a working key rather than silently skipping the review. Catches what a regex can't — a real customer name, an internal codename, proprietary logic described in a comment. Set `llm_safety_review: { enabled: false }` to skip the review outright for a mapping that has no OpenAI dependency to spare.
 - **`llm_safety_review.additional_context`** — optional, project-specific "also watch for this" text — appended to the reviewer's fixed base prompt, never replacing it, so the built-in invariants (never quote the actual sensitive value, bias toward blocking when uncertain) can't be weakened by config.
 - **`project_name`** — optional human-readable label (e.g. `Prod`) used in Slack messages and as the commit author's display name; omit to fall back to a mechanical `label:mapping_key` prefix.
+- **`source-token`** — optional; a *different* token from `target-token`, which is scoped to the OSS repo only and can't be reused here. Needs `contents: write` on the **source** (production) repo -- `secrets.GITHUB_TOKEN` already has that for the repo the workflow runs in, as long as the job's own `permissions:` grants it (some orgs default it to read-only). Powers a real GitHub comment on the source commit for every halt/error. Without it, that notification still happens (Action-log print always, Slack if configured) — this only adds the comment-on-commit channel, nothing depends on it.
 - **`slack-webhook-url`/`slack-channel`** (`notify.py`/`slack.py`) — optional, best-effort; a missing or broken webhook never affects whether the sync itself succeeds. `slack-channel` only matters if the webhook's own Slack app honors a channel override.
 
 Two things worth knowing about `base`/`head`:
@@ -187,7 +193,7 @@ Before deploying against a repo that takes outside contributions on its default 
 
 ## Setting the required secrets and variables
 
-All four inputs above are plain **repo-level** Actions secrets/variables — no GitHub Environment needed, so there's nothing to gate behind an `environment:` key in the job.
+All four inputs above are plain **repo-level** Actions secrets/variables — no GitHub Environment needed, so there's nothing to gate behind an `environment:` key in the job. `source-token` isn't in this table because there's nothing to create for it — `secrets.GITHUB_TOKEN` is provisioned automatically for every workflow run; the only setup it needs is the job's own `permissions: contents: write` (shown above).
 
 | Name                      | Kind                            | Where it comes from                                        |
 | ------------------------- | ------------------------------- | ---------------------------------------------------------- |

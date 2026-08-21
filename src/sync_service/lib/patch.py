@@ -57,9 +57,19 @@ def commits_between(repo_path: str | Path, base: str, head: str, source: str) ->
 
 
 def merge_commits_between(repo_path: str | Path, base: str, head: str, source: str) -> list[str]:
-    """Merge commits touching `source` -- checked only to give a specific halt
-    reason when one is the sole thing in range (commits_between excludes these
-    entirely; a merge can't be replayed as a single linear step).
+    """Merge commits touching `source` -- checked unconditionally, before
+    commits_between even matters, and any result halts the whole batch.
+    commits_between excludes merges entirely (a merge can't be replayed as a
+    single linear step); a merge's own unique content -- e.g. hand-resolved
+    conflict content that exists in neither parent individually -- is never
+    captured by replaying its parents alone, confirmed empirically (two
+    branches independently setting the same line, a human resolving the
+    conflict to a third value; replaying just the two parent commits lands on
+    neither value). This applies whether or not non-merge commits also exist
+    in the same range -- silently replaying just those and ignoring the merge
+    would leave the OSS side with a *wrong* final state, not just an
+    incomplete one, so this can't be limited to "only when nothing else is in
+    range."
 
     `--full-history`: git log's default path simplification hides a merge
     entirely whenever only one parent actually touched `source` (the common

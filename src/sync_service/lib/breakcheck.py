@@ -18,7 +18,13 @@ from .config import BreakCheck
 
 # Defense in depth: these commands are untrusted, far-side-authored install/run
 # strings, so none of this process's tokens/keys should be readable to them.
-_STRIP_ENV_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "SLACK_WEBHOOK_URL"}
+_STRIP_ENV_VARS = {
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "SOURCE_GH_TOKEN",
+    "OPENAI_API_KEY",
+    "SLACK_WEBHOOK_URL",
+}
 
 
 @dataclass

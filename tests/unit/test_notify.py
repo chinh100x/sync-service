@@ -1,3 +1,5 @@
+import subprocess
+
 from sync_service.lib import notify
 
 
@@ -57,6 +59,75 @@ def test_comment_on_commit_falls_back_to_a_bare_sha_without_github_repository(mo
 
     assert "abc123def456" in result  # pragma: allowlist secret
     assert "https://" not in result  # nothing to link to locally/in tests
+
+
+# --- comment_on_commit(): the real GitHub API call, when a token is available ---
+
+
+def test_comment_on_commit_posts_a_real_github_comment_when_token_and_repo_are_set(
+    monkeypatch,
+):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "chinh100x/prod")
+    monkeypatch.setattr(notify.slack, "post", lambda text: True)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(notify.subprocess, "run", fake_run)
+
+    fake_sha = "abc123def456"  # pragma: allowlist secret
+    fake_token = "ghp_faketoken"  # pragma: allowlist secret
+    notify.comment_on_commit(fake_sha, "something halted", token=fake_token)
+
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd == [
+        "gh",
+        "api",
+        "repos/chinh100x/prod/commits/abc123def456/comments",
+        "-f",
+        "body=something halted",
+    ]
+    assert kwargs["env"]["GH_TOKEN"] == "ghp_faketoken"
+
+
+def test_comment_on_commit_skips_the_real_api_call_without_a_token(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "chinh100x/prod")
+    monkeypatch.setattr(notify.slack, "post", lambda text: True)
+    calls = []
+    monkeypatch.setattr(notify.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+
+    notify.comment_on_commit("abc123", "body text")  # token defaults to None
+
+    assert calls == []
+
+
+def test_comment_on_commit_skips_the_real_api_call_without_a_repo(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.setattr(notify.slack, "post", lambda text: True)
+    calls = []
+    monkeypatch.setattr(notify.subprocess, "run", lambda *a, **k: calls.append((a, k)))
+
+    notify.comment_on_commit("abc123", "body text", token="ghp_faketoken")
+
+    assert calls == []  # nothing to address the API call to, locally
+
+
+def test_comment_on_commit_real_api_failure_never_raises(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "chinh100x/prod")
+    monkeypatch.setattr(notify.slack, "post", lambda text: True)
+    monkeypatch.setattr(
+        notify.subprocess,
+        "run",
+        lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="422 no scope"),
+    )
+
+    result = notify.comment_on_commit("abc123", "body text", token="ghp_faketoken")
+
+    assert "body text" in result  # the print + Slack channel already succeeded regardless
+    assert "GitHub commit comment failed" in capsys.readouterr().out
 
 
 def test_pr_opened_posts_a_slack_link_using_the_title_as_link_text(monkeypatch, capsys):
