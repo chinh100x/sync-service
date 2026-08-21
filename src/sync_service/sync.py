@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from enum import Enum
 from pathlib import Path
 
 from .lib import (
@@ -32,7 +33,31 @@ from .lib import (
 from .lib.config import Mapping, SyncConfig
 
 
-def _halt(head_sha: str, message: str, outcome: str, source_gh_token: str | None = None) -> str:
+class OutcomeKind(str, Enum):
+    """Every value run_mapping()/main() can produce. Backed by str so an
+    existing `outcome == "empty"`-style comparison still works unchanged --
+    this only adds a fixed vocabulary (no more typo'd literals) and lets
+    main() test membership without re-deriving which strings mean failure."""
+
+    OPENED = "opened"
+    SKIPPED_EXISTS = "skipped-exists"
+    REPLAY_HALT = "replay-halt"
+    EMPTY = "empty"
+    UNCHANGED = "unchanged"
+    BREAKCHECK_HALT = "breakcheck-halt"
+    SAFETY_REVIEW_ERROR = "safety-review-error"
+    PUBLISH_FAILED = "publish-failed"
+
+
+# The only two outcomes that mean this run itself malfunctioned, rather than
+# the tool correctly enforcing policy or finding nothing to do -- see main()'s
+# exit-code check below.
+_FAILURE_OUTCOMES = {OutcomeKind.SAFETY_REVIEW_ERROR, OutcomeKind.PUBLISH_FAILED}
+
+
+def _halt(
+    head_sha: str, message: str, outcome: OutcomeKind, source_gh_token: str | None = None
+) -> OutcomeKind:
     """Every halt notifies the same way (comment on the source commit + Slack)
     before returning its outcome string -- collapses that two-line pattern to one
     call site per gate. Skipped for the one halt (breakcheck) that has a side
@@ -190,7 +215,7 @@ def run_mapping(
     llm_safety_review_enabled: bool,
     llm_safety_review_additional_context: str | None,
     project_name: str | None,
-) -> str:
+) -> OutcomeKind:
     """One real OSS commit per production commit in base..head, each keeping
     its own message and author. All-or-nothing: a gate failure on any commit
     discards every commit made so far in this batch (see
@@ -213,7 +238,7 @@ def run_mapping(
             head_sha,
             f"[{project_label}] {mapping.key}: PR already exists for this commit "
             "— skipping (idempotent re-run).",
-            "skipped-exists",
+            OutcomeKind.SKIPPED_EXISTS,
             source_gh_token,
         )
 
@@ -234,7 +259,7 @@ def run_mapping(
             f"{mapping.source}/ in this range -- replay can't linearize a merge "
             "automatically (its own conflict-resolution content, if any, isn't "
             "captured by replaying its parents individually). Halted, no PR.",
-            "replay-halt",
+            OutcomeKind.REPLAY_HALT,
             source_gh_token,
         )
 
@@ -245,7 +270,7 @@ def run_mapping(
             head_sha,
             f"[{project_label}] {mapping.key}: no commits under {mapping.source}/ in "
             "base..head — no-op, no PR.",
-            "empty",
+            OutcomeKind.EMPTY,
             source_gh_token,
         )
 
@@ -275,7 +300,7 @@ def run_mapping(
                 head_sha,
                 f"[{project_label}] {mapping.key}: semantic safety review unavailable "
                 f"({exc}) -- halted out of caution, no PR.",
-                "safety-review-error",
+                OutcomeKind.SAFETY_REVIEW_ERROR,
                 source_gh_token,
             )
         if isinstance(outcome, str):
@@ -286,7 +311,7 @@ def run_mapping(
                 head_sha,
                 f"[{project_label}] {mapping.key}: replay halted at commit "
                 f"{sha[:12]} -- {outcome}. Halted, no PR.",
-                "replay-halt",
+                OutcomeKind.REPLAY_HALT,
                 source_gh_token,
             )
         committed, categories, touched, binary_paths = outcome
@@ -307,7 +332,7 @@ def run_mapping(
             f"[{project_label}] {mapping.key}: scrubbed content matches what's "
             f"already on the OSS side across {len(commits)} commit(s) — nothing to "
             "commit, no PR.",
-            "unchanged",
+            OutcomeKind.UNCHANGED,
             source_gh_token,
         )
 
@@ -328,7 +353,7 @@ def run_mapping(
             token=source_gh_token,
         )
         publish.discard_branch_and_reset(dest_repo, base_branch, branch)
-        return "breakcheck-halt"
+        return OutcomeKind.BREAKCHECK_HALT
 
     # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
     return _finalize_and_publish(
@@ -361,7 +386,7 @@ def _finalize_and_publish(
     llm_pr_enabled: bool,
     gh_token: str | None,
     source_gh_token: str | None,
-) -> str:
+) -> OutcomeKind:
     """The one place this tool tries to be human-readable rather than purely
     mechanical. Built only from already-scrubbed, already-validated OSS-side
     content; falls back to a deterministic title/body on any failure -- pr_writer
@@ -392,14 +417,14 @@ def _finalize_and_publish(
         return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
-            "publish-failed",
+            OutcomeKind.PUBLISH_FAILED,
             source_gh_token,
         )
     # Only mark synced once publish actually succeeded -- a halt/failure must
     # still be retried on the next run, not silently skipped.
     publish.record_synced(dest_repo, mapping.key, head_sha, token=gh_token)
     notify.pr_opened(project_label, title, result.message)
-    return "opened"
+    return OutcomeKind.OPENED
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -460,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             print("no mapping touched — no-op")
             return 0
 
-        outcomes = []
+        outcomes: list[OutcomeKind] = []
         for key in hits:
             m = by_mapping[key]
             outcomes.append(
@@ -484,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
         # working as intended. A publish failure or a safety review that
         # couldn't even run is a real problem with this run and must not be
         # silently reported as success.
-        if "publish-failed" in outcomes or "safety-review-error" in outcomes:
+        if any(o in _FAILURE_OUTCOMES for o in outcomes):
             return 1
         return 0
 
