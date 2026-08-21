@@ -33,38 +33,21 @@ def _post_github_comment(repo: str, commit_sha: str, body: str, token: str) -> N
 
 def comment_on_commit(commit_sha: str, body: str, token: str | None = None) -> str:
     short = commit_sha[:12]
-    # GITHUB_REPOSITORY ("owner/repo") is set automatically on every GitHub
-    # Actions run -- absent locally/in tests, where a bare sha is all there is
-    # to show anyway.
     repo = os.environ.get("GITHUB_REPOSITORY")
     commit_url = f"https://github.com/{repo}/commit/{commit_sha}" if repo else None
-    # Fenced so the body renders as a code block everywhere it's posted --
-    # GitHub comments and Slack mrkdwn both use the same ``` syntax, so one
-    # format serves every channel. Callers should never add their own nested
-    # fence inside `body` (e.g. around raw command output) -- Slack/GitHub
-    # don't render nested triple-backtick fences correctly; let this one
-    # outer fence cover the whole message instead.
     fenced_body = f"```\n{body}\n```"
 
     if commit_url:
         message = f"[sync-service] comment on {commit_url}:\n{fenced_body}"
-        # A plain URL, not Slack's <url|text> syntax, here -- this is what gets
-        # printed to the Action's own log, which auto-linkifies a bare URL but
-        # would show mrkdwn's angle brackets as literal text.
         print(message)
-        # Slack gets the shorter, more readable link text via its own <url|text>
-        # mrkdwn syntax instead of a full URL in the message body.
         slack.post(f"[sync-service] comment on <{commit_url}|{short}>:\n{fenced_body}")
     else:
         message = f"[sync-service] comment on {short}:\n{fenced_body}"
         print(message)
         slack.post(message)
 
-    # No token, or no way to know which repo to post to (e.g. running locally) --
-    # the print + Slack above already covered the notification; this is a bonus
-    # channel, not the only one.
     if token and repo:
-        _post_github_comment(repo, commit_sha, fenced_body, token)
+        _post_github_comment(repo, commit_sha, body, token)
 
     return message
 
