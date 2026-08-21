@@ -275,101 +275,102 @@ def run_mapping(
         )
 
     branch = publish.branch_name(f"sync/{mapping.key}", head_sha)
-    publish.create_branch(dest_repo, branch)
+    # CandidateBranch discards this branch on __exit__ by default -- covers every
+    # early return below AND any exception nobody thought to catch explicitly,
+    # not just the ones with their own discard_branch_and_reset call. Only
+    # _finalize_and_publish resolves it (.publish() / .keep()) instead.
+    with publish.CandidateBranch(dest_repo, base_branch, branch) as candidate:
+        replayed = 0
+        all_touched: set[str] = set()
+        all_categories: set[str] = set()
+        all_binary: set[str] = set()
+        for sha in commits:
+            try:
+                outcome = _replay_one_commit(
+                    mapping=mapping,
+                    source_repo=source_repo,
+                    dest_repo=dest_repo,
+                    sha=sha,
+                    llm_safety_review_enabled=llm_safety_review_enabled,
+                    llm_safety_review_additional_context=llm_safety_review_additional_context,
+                )
+            except safety_review.SafetyReviewUnavailable as exc:
+                # An infra failure (missing key, API error), not a policy decision --
+                # a hard halt, never an implicit pass, and distinct from the generic
+                # "replay-halt" below so main() can exit 1 instead of 0 for it.
+                return _halt(
+                    head_sha,
+                    f"[{project_label}] {mapping.key}: semantic safety review unavailable "
+                    f"({exc}) -- halted out of caution, no PR.",
+                    OutcomeKind.SAFETY_REVIEW_ERROR,
+                    source_gh_token,
+                )
+            if isinstance(outcome, str):
+                # Discards every commit made so far this batch, not just this one --
+                # nothing partial from a halted replay may ever reach origin.
+                return _halt(
+                    head_sha,
+                    f"[{project_label}] {mapping.key}: replay halted at commit "
+                    f"{sha[:12]} -- {outcome}. Halted, no PR.",
+                    OutcomeKind.REPLAY_HALT,
+                    source_gh_token,
+                )
+            committed, categories, touched, binary_paths = outcome
+            all_categories |= set(categories)
+            all_touched |= set(touched)
+            all_binary |= set(binary_paths)
+            if committed:
+                replayed += 1
+            status = "committed" if committed else "no-op"
+            print(f"[sync:{mapping.key}] replayed {sha[:12]} ({status})")
 
-    replayed = 0
-    all_touched: set[str] = set()
-    all_categories: set[str] = set()
-    all_binary: set[str] = set()
-    for sha in commits:
-        try:
-            outcome = _replay_one_commit(
-                mapping=mapping,
-                source_repo=source_repo,
-                dest_repo=dest_repo,
-                sha=sha,
-                llm_safety_review_enabled=llm_safety_review_enabled,
-                llm_safety_review_additional_context=llm_safety_review_additional_context,
+        if replayed == 0:
+            print(
+                f"[sync:{mapping.key}] nothing changed vs the OSS side across "
+                f"{len(commits)} commit(s)"
             )
-        except safety_review.SafetyReviewUnavailable as exc:
-            # An infra failure (missing key, API error), not a policy decision --
-            # a hard halt, never an implicit pass, and distinct from the generic
-            # "replay-halt" below so main() can exit 1 instead of 0 for it.
-            publish.discard_branch_and_reset(dest_repo, base_branch, branch)
             return _halt(
                 head_sha,
-                f"[{project_label}] {mapping.key}: semantic safety review unavailable "
-                f"({exc}) -- halted out of caution, no PR.",
-                OutcomeKind.SAFETY_REVIEW_ERROR,
+                f"[{project_label}] {mapping.key}: scrubbed content matches what's "
+                f"already on the OSS side across {len(commits)} commit(s) — nothing to "
+                "commit, no PR.",
+                OutcomeKind.UNCHANGED,
                 source_gh_token,
             )
-        if isinstance(outcome, str):
-            # Discards every commit made so far this batch, not just this one --
-            # nothing partial from a halted replay may ever reach origin.
-            publish.discard_branch_and_reset(dest_repo, base_branch, branch)
-            return _halt(
+
+        # --- breakcheck.py: runs once, against the final replayed state -- not once
+        # per replayed commit. An intermediate commit is a real historical waypoint,
+        # not something that individually needs to install/build/pass on its own.
+        # mapping.break_check has no default in the schema -- always present on a
+        # validly-loaded config, never None -- so this always runs. ---
+        check = breakcheck.run(dest_repo, mapping.break_check)
+        if not check.passed:
+            # No fence of its own around check.output here -- comment_on_commit
+            # already wraps the whole body in one, and Slack/GitHub don't render
+            # nested triple-backtick fences correctly.
+            notify.comment_on_commit(
                 head_sha,
-                f"[{project_label}] {mapping.key}: replay halted at commit "
-                f"{sha[:12]} -- {outcome}. Halted, no PR.",
-                OutcomeKind.REPLAY_HALT,
-                source_gh_token,
+                f"[{project_label}] {mapping.key}: break check failed at "
+                f"`{check.failed_step}`:\n{check.output}",
+                token=source_gh_token,
             )
-        committed, categories, touched, binary_paths = outcome
-        all_categories |= set(categories)
-        all_touched |= set(touched)
-        all_binary |= set(binary_paths)
-        if committed:
-            replayed += 1
-        print(f"[sync:{mapping.key}] replayed {sha[:12]} ({'committed' if committed else 'no-op'})")
+            return OutcomeKind.BREAKCHECK_HALT
 
-    if replayed == 0:
-        publish.discard_branch_and_reset(dest_repo, base_branch, branch)
-        print(
-            f"[sync:{mapping.key}] nothing changed vs the OSS side across {len(commits)} commit(s)"
+        # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
+        return _finalize_and_publish(
+            candidate=candidate,
+            mapping=mapping,
+            dest_repo=dest_repo,
+            base_branch=base_branch,
+            head_sha=head_sha,
+            project_label=project_label,
+            changed_files=sorted(all_touched),
+            scrubbed_categories=sorted(all_categories),
+            unscrubbed_binary_files=sorted(all_binary),
+            llm_pr_enabled=llm_pr_enabled,
+            gh_token=gh_token,
+            source_gh_token=source_gh_token,
         )
-        return _halt(
-            head_sha,
-            f"[{project_label}] {mapping.key}: scrubbed content matches what's "
-            f"already on the OSS side across {len(commits)} commit(s) — nothing to "
-            "commit, no PR.",
-            OutcomeKind.UNCHANGED,
-            source_gh_token,
-        )
-
-    # --- breakcheck.py: runs once, against the final replayed state -- not once
-    # per replayed commit. An intermediate commit is a real historical waypoint,
-    # not something that individually needs to install/build/pass on its own.
-    # mapping.break_check has no default in the schema -- always present on a
-    # validly-loaded config, never None -- so this always runs. ---
-    check = breakcheck.run(dest_repo, mapping.break_check)
-    if not check.passed:
-        # No fence of its own around check.output here -- comment_on_commit
-        # already wraps the whole body in one, and Slack/GitHub don't render
-        # nested triple-backtick fences correctly.
-        notify.comment_on_commit(
-            head_sha,
-            f"[{project_label}] {mapping.key}: break check failed at "
-            f"`{check.failed_step}`:\n{check.output}",
-            token=source_gh_token,
-        )
-        publish.discard_branch_and_reset(dest_repo, base_branch, branch)
-        return OutcomeKind.BREAKCHECK_HALT
-
-    # --- pr_writer.py + publish.py: generate the PR content, then publish it. ---
-    return _finalize_and_publish(
-        mapping=mapping,
-        dest_repo=dest_repo,
-        base_branch=base_branch,
-        branch=branch,
-        head_sha=head_sha,
-        project_label=project_label,
-        changed_files=sorted(all_touched),
-        scrubbed_categories=sorted(all_categories),
-        unscrubbed_binary_files=sorted(all_binary),
-        llm_pr_enabled=llm_pr_enabled,
-        gh_token=gh_token,
-        source_gh_token=source_gh_token,
-    )
 
 
 def _finalize_and_publish(
@@ -377,7 +378,7 @@ def _finalize_and_publish(
     mapping: Mapping,
     dest_repo: Path,
     base_branch: str,
-    branch: str,
+    candidate: publish.CandidateBranch,
     head_sha: str,
     project_label: str,
     changed_files: list[str],
@@ -398,7 +399,7 @@ def _finalize_and_publish(
         mapping_key=mapping.key,
         public_reason=mapping.public_reason,
         changed_files=changed_files,
-        sanitized_diff=diff.candidate_diff(dest_repo, base_branch, branch),
+        sanitized_diff=diff.candidate_diff(dest_repo, base_branch, candidate.branch),
         scrubbed_categories=scrubbed_categories,
         unscrubbed_binary_files=unscrubbed_binary_files,
         validation=pr_writer.ValidationSummary(run_command=mapping.break_check.run),
@@ -410,16 +411,21 @@ def _finalize_and_publish(
     branch = publish.slugify(title)
     if publish.branch_exists(dest_repo, branch):
         branch = f"{branch}-{head_sha[:7]}"
-    publish.rename_branch(dest_repo, branch)
-    result = publish.open_pr(dest_repo, branch, base_branch, title, body, token=gh_token)
+    candidate.rename(branch)
+    result = publish.open_pr(dest_repo, candidate.branch, base_branch, title, body, token=gh_token)
     print(f"[sync:{mapping.key}] {result.message}")
     if not result.success:
+        # A real `git push` may have already landed before `gh pr create` failed --
+        # discarding the local branch here wouldn't undo that, so keep it rather
+        # than tearing it down (see CandidateBranch's own docstring).
+        candidate.keep()
         return _halt(
             head_sha,
             f"[{project_label}] {mapping.key}: publish failed -- {result.message}",
             OutcomeKind.PUBLISH_FAILED,
             source_gh_token,
         )
+    candidate.publish()
     # Only mark synced once publish actually succeeded -- a halt/failure must
     # still be retried on the next run, not silently skipped.
     publish.record_synced(dest_repo, mapping.key, head_sha, token=gh_token)

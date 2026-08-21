@@ -191,6 +191,48 @@ def discard_branch_and_reset(dest_repo: Path, base_branch: str, branch: str) -> 
     subprocess.run(["git", *_git_id(), "branch", "-D", branch], cwd=dest_repo, capture_output=True)
 
 
+class CandidateBranch:
+    """Context manager around one create_branch/discard_branch_and_reset
+    lifecycle. Covers every early return from run_mapping's replay loop --
+    and, unlike a manual discard_branch_and_reset call at each site, any
+    exception nobody thought to catch explicitly too.
+
+    Defaults to discarding the branch on __exit__. Call .publish() once
+    it's actually opened as a PR, or .keep() when a publish attempt itself
+    failed but a real `git push` may already have landed on the remote --
+    discarding the local branch at that point wouldn't undo the push, so
+    there's nothing to gain from tearing it down and something to lose if
+    a human wants to retry from it."""
+
+    def __init__(self, dest_repo: Path, base_branch: str, branch: str) -> None:
+        self.dest_repo = dest_repo
+        self.base_branch = base_branch
+        self.branch = branch
+        self._resolved = False
+
+    def __enter__(self) -> CandidateBranch:
+        create_branch(self.dest_repo, self.branch)
+        return self
+
+    def rename(self, new_name: str) -> None:
+        """Renames the still-candidate branch, keeping this object's own
+        notion of its name in sync -- so a later discard (whether from an
+        early return or an exception) targets the branch actually checked
+        out, not the one it started as."""
+        rename_branch(self.dest_repo, new_name)
+        self.branch = new_name
+
+    def publish(self) -> None:
+        self._resolved = True
+
+    def keep(self) -> None:
+        self._resolved = True
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if not self._resolved:
+            discard_branch_and_reset(self.dest_repo, self.base_branch, self.branch)
+
+
 @dataclass
 class PublishResult:
     success: bool
